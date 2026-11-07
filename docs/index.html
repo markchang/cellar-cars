@@ -122,6 +122,19 @@
   /* Charts */
   .chart { position: relative; width: 100%; }
   .chart svg { display: block; overflow: visible; }
+  .tl-wrap { position: relative; }
+  .tl-scroll { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; padding-bottom: 6px; }
+  .tl-scroll svg { overflow: hidden; }
+  /* Soft fade on the left edge hints that there's more to scroll to. */
+  .tl-wrap.can-scroll::before {
+    content: ""; position: absolute; top: 0; bottom: 6px; width: 18px; z-index: 1; pointer-events: none;
+    left: var(--tl-gutter, 0px); background: linear-gradient(to right, var(--surface-1), transparent);
+  }
+  .tl-owner { position: absolute; left: 0; z-index: 2; font-size: 13px; line-height: 16px; white-space: nowrap; }
+  .tl-owner .sw { margin-right: 6px; vertical-align: -1px; }
+  .tl-owner .tl-count { font-size: 11px; color: var(--text-muted); margin-left: 16px; }
+  .tl-owner.floating { background: var(--surface-1); padding-right: 6px; font-size: 12px; }
+  .tl-owner.floating .tl-count { margin-left: 4px; display: inline; }
   .chart text { font-family: inherit; }
   .tick { font-size: 11px; fill: var(--text-muted); font-variant-numeric: tabular-nums; }
   .caption { font-size: 12px; color: var(--text-muted); margin: 8px 0 0; }
@@ -405,7 +418,7 @@
       <section class="card" id="tiles"></section>
       <section class="card">
         <div class="card-h">
-          <div><h2>Ownership timeline</h2><p class="desc">Each bar is one car, from purchase to sale. Bars that reach the “now” line are still in the garage.</p></div>
+          <div><h2>Ownership timeline</h2><p class="desc">Each bar is one car, from purchase to sale. Bars that reach the “now” line are still in the garage.<span id="tlHint" hidden> Scroll sideways for earlier years.</span></p></div>
           <div id="tlLegend"></div>
         </div>
         <div class="chart" id="timeline"></div>
@@ -487,85 +500,110 @@
   }
 
   // ---------- timeline ----------
+  // Wide enough that most names fit inside their bars; scrolls sideways and opens at "now".
+  // Short bars get their name after the bar, and rows are packed so names never overlap.
   function renderTimeline() {
     const host = $('#timeline'); host.innerHTML = ''; hideTip();
     const W = Math.max(240, host.clientWidth);
     const [x0, x1] = domain();
-    const labelW = W < 560 ? 0 : 78, padR = 8, axisH = 22, ROW = 20, BAR = 16, GROUP_GAP = 18, GROUP_HEAD = W < 560 ? 18 : 0;
-    const plotL = labelW, plotR = W - padR;
-    const xs = m => plotL + (m - x0) / (x1 - x0) * (plotR - plotL);
+    const narrow = W < 560;
+    const gutter = narrow ? 0 : 84;              // pinned owner-name column (wide screens)
+    const viewW = W - gutter;
+    const months = x1 - x0;
+    const desired = state.range === 'all' ? 10 : (state.range === '1y' || state.range === 'ytd') ? 0 : 24;
+    const ppm = Math.max(viewW / months, desired);  // pixels per month; never narrower than the screen
+    const contentW = Math.round(months * ppm);
+    const padL = 2, padR = 8, axisH = 22, ROW = 20, BAR = 16, GROUP_GAP = 18, GROUP_HEAD = narrow ? 20 : 0;
+    const xs = m => padL + (m - x0) / months * (contentW - padL - padR);
 
-    // Pack each owner's cars into as few rows as possible (cars that don't overlap share a row).
+    const insideFont = `500 11px ${FONT}`, outsideFont = `11px ${FONT}`;
+    const shortName = n => n.replace(/^(19|20)\d{2}\s+/, '');
+
+    // Decide each car's label placement, then pack rows by the space each bar + label really takes.
     let y = axisH + 6;
     const groups = shownOwners().map(o => {
       const cars = DATA.cars.filter(c => c.owner === o && c.barEnd > x0).sort((a, b) => a.inM - b.inM || a.barEnd - b.barEnd);
       const lanes = [];
       cars.forEach(c => {
-        let i = lanes.findIndex(end => end <= c.inM);
+        const bx = xs(c.inM) + 1, bxe = xs(c.barEnd) - 1;
+        const visL = Math.max(bx, padL), visW = bxe - visL;
+        const inside = [c.name, shortName(c.name)].find(n => textWidth(n, insideFont) + 12 <= visW);
+        let occL = visL, occR = bxe + 3, out = null;
+        if (!inside) {
+          const text = shortName(c.name), tw = textWidth(text, outsideFont);
+          if (bxe + 5 + tw <= contentW - padR) { out = { text, x: bxe + 5, anchor: 'start' }; occR = bxe + 5 + tw + 10; }
+          else { out = { text, x: visL - 5, anchor: 'end' }; occL = visL - 5 - tw - 10; }
+        }
+        let i = lanes.findIndex(end => end <= occL);
         if (i === -1) { i = lanes.length; lanes.push(0); }
-        lanes[i] = c.barEnd; c._lane = i;
+        lanes[i] = occR;
+        c._tl = { lane: i, bx, bxe, visL, inside, out };
       });
       const g = { owner: o, cars, y: y + GROUP_HEAD, h: Math.max(1, lanes.length) * ROW };
       y = g.y + g.h + GROUP_GAP;
       return g;
     });
     const H = y - GROUP_GAP + 8;
-    const svg = el('svg', { width: W, height: H, role: 'img', 'aria-label': 'Car ownership timeline' }, host);
-    const defs = el('defs', null, svg);
-    const clip = el('clipPath', { id: 'tlClip' }, defs);
-    el('rect', { x: plotL, y: 0, width: plotR - plotL, height: H }, clip);
 
-    // Time grid (years, or months for short ranges)
-    timeTicks(x0, x1, plotR - plotL, 52).forEach(t => {
+    const wrap = document.createElement('div'); wrap.className = 'tl-wrap'; wrap.style.paddingLeft = gutter + 'px'; wrap.style.setProperty('--tl-gutter', gutter + 'px');
+    const scroller = document.createElement('div'); scroller.className = 'tl-scroll';
+    wrap.appendChild(scroller); host.appendChild(wrap);
+    const svg = el('svg', { width: contentW, height: H, role: 'img', 'aria-label': 'Car ownership timeline' }, scroller);
+
+    // Time grid (months when zoomed in, years when zoomed out)
+    timeTicks(x0, x1, contentW, 64).forEach(t => {
       const x = xs(t.m);
       el('line', { x1: x, x2: x, y1: axisH, y2: H - 4, style: 'stroke:var(--grid)', 'stroke-width': 1 }, svg);
-      // Skip a label that would collide with the "now" label.
-      if (Math.abs(x - xs(NOW + 1)) > 44) el('text', { x, y: axisH - 8, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = t.label;
+      if (Math.abs(x - xs(NOW + 1)) > 44 && x > 12) el('text', { x, y: axisH - 8, 'text-anchor': 'middle', class: 'tick', style: t.label.length === 4 ? 'fill:var(--text-secondary);font-weight:600' : '' }, svg).textContent = t.label;
     });
-    el('line', { x1: plotL, x2: plotR, y1: axisH, y2: axisH, style: 'stroke:var(--axis)' }, svg);
-
-    // "Now" marker
+    el('line', { x1: 0, x2: contentW, y1: axisH, y2: axisH, style: 'stroke:var(--axis)' }, svg);
     const nx = xs(NOW + 1);
     el('line', { x1: nx, x2: nx, y1: axisH, y2: H - 4, style: 'stroke:var(--text-muted)', 'stroke-width': 1 }, svg);
     el('text', { x: nx - 4, y: axisH - 8, 'text-anchor': 'end', class: 'tick', style: 'fill:var(--text-secondary);font-weight:600' }, svg).textContent = 'now';
 
-    const labelFont = `500 11px ${FONT}`;
+    const sliding = [];  // names inside bars, kept in view as you scroll
     groups.forEach(g => {
-      // Owner label
-      if (labelW) {
-        el('rect', { x: 0, y: g.y + 3, width: 10, height: 10, rx: 3, style: `fill:${ownerVar(g.owner)}` }, svg);
-        const t = el('text', { x: 16, y: g.y + 12, style: 'font-size:13px;font-weight:600;fill:var(--text-primary)' }, svg);
-        t.textContent = g.owner;
-        el('text', { x: 16, y: g.y + 27, class: 'tick' }, svg).textContent = g.cars.length + ' cars';
-      } else {
-        el('rect', { x: 0, y: g.y - GROUP_HEAD + 2, width: 10, height: 10, rx: 3, style: `fill:${ownerVar(g.owner)}` }, svg);
-        el('text', { x: 16, y: g.y - GROUP_HEAD + 11, style: 'font-size:12px;font-weight:600;fill:var(--text-primary)' }, svg).textContent = g.owner;
-      }
-      const layer = el('g', { 'clip-path': 'url(#tlClip)' }, svg);
+      // Owner label: pinned in the left column (wide) or floating over its group's header row (narrow).
+      const lab = document.createElement('div');
+      lab.className = 'tl-owner' + (narrow ? ' floating' : '');
+      lab.style.top = (narrow ? g.y - GROUP_HEAD + 1 : g.y) + 'px';
+      lab.innerHTML = `<span class="sw" style="background:${ownerVar(g.owner)}"></span><b>${esc(g.owner)}</b>${narrow ? ` <span class="tl-count">${g.cars.length} cars</span>` : `<div class="tl-count">${g.cars.length} cars</div>`}`;
+      wrap.appendChild(lab);
+
       g.cars.forEach(c => {
-        const bx = xs(c.inM) + 1, bxe = xs(c.barEnd) - 1;
-        const bw = Math.max(3, bxe - bx);
-        const by = g.y + c._lane * ROW + (ROW - BAR) / 2;
-        const r = Math.min(4, bw / 2);
-        const bar = el('rect', { x: bx, y: by, width: bw, height: BAR, rx: r, style: `fill:${ownerVar(c.owner)};cursor:default` }, layer);
-        if (c.current) bar.setAttribute('style', bar.getAttribute('style') + ';opacity:1');
-        else bar.setAttribute('opacity', '0.82');
-        // Label inside the bar when it fits in the visible part.
-        const visL = Math.max(bx, plotL), visW = bxe - visL;
-        const label = c.name;
-        const short = c.name.replace(/^(19|20)\d{2}\s+/, '');
-        const pick = [label, short].find(s => textWidth(s, labelFont) + 12 <= visW);
-        if (pick) {
-          const t = el('text', { x: visL + 6, y: by + BAR / 2 + 4, style: 'font-size:11px;font-weight:500;fill:#fff;pointer-events:none' }, layer);
-          t.textContent = pick;
+        const L = c._tl, rowY = g.y + L.lane * ROW, by = rowY + (ROW - BAR) / 2;
+        const bw = Math.max(3, L.bxe - L.bx), r = Math.min(4, bw / 2);
+        const bar = el('rect', { x: L.bx, y: by, width: bw, height: BAR, rx: r, style: `fill:${ownerVar(c.owner)}` }, svg);
+        if (!c.current) bar.setAttribute('opacity', '0.82');
+        if (L.inside) {
+          const t = el('text', { x: L.visL + 6, y: by + BAR / 2 + 4, style: 'font-size:11px;font-weight:500;fill:#fff;pointer-events:none' }, svg);
+          t.textContent = L.inside;
+          sliding.push({ t, min: L.visL + 6, max: L.bxe - 6 - textWidth(L.inside, insideFont) });
+        } else if (L.out) {
+          el('text', { x: L.out.x, y: by + BAR / 2 + 4, 'text-anchor': L.out.anchor, style: 'font-size:11px;fill:var(--text-secondary);pointer-events:none' }, svg).textContent = L.out.text;
         }
-        // Generous invisible hit target
-        const hit = el('rect', { x: bx - 2, y: g.y + c._lane * ROW, width: Math.max(bw + 4, 8), height: ROW, fill: 'transparent' }, layer);
+        const hx = L.out ? Math.min(L.bx, L.out.anchor === 'end' ? L.out.x - textWidth(L.out.text, outsideFont) : L.bx) : L.bx;
+        const hxe = L.out && L.out.anchor === 'start' ? L.out.x + textWidth(L.out.text, outsideFont) : L.bxe;
+        const hit = el('rect', { x: hx - 2, y: rowY, width: Math.max(hxe - hx + 4, 8), height: ROW, fill: 'transparent' }, svg);
         hoverable(hit, () => carTip(c));
         hit.addEventListener('pointerenter', () => bar.setAttribute('opacity', '1'));
         hit.addEventListener('pointerleave', () => { if (!c.current) bar.setAttribute('opacity', '0.82'); });
       });
     });
+
+    // Open at "now"; earlier years are a scroll (or swipe) to the left.
+    // A name inside a long bar slides along it, so it stays on screen when the bar's start is scrolled away.
+    const slide = () => {
+      const left = scroller.scrollLeft + 22;
+      sliding.forEach(o => o.t.setAttribute('x', Math.max(o.min, Math.min(left, o.max))));
+    };
+    let raf = 0;
+    scroller.addEventListener('scroll', () => { hideTip(); if (!raf) raf = requestAnimationFrame(() => { raf = 0; slide(); }); }, { passive: true });
+    scroller.scrollLeft = scroller.scrollWidth;
+    slide();
+    const scrolls = contentW > viewW + 1;
+    wrap.classList.toggle('can-scroll', scrolls);
+    $('#tlHint').hidden = !scrolls;
   }
 
   // ---------- garage size ----------
