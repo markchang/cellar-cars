@@ -159,7 +159,7 @@
     position: fixed; z-index: 10; pointer-events: none; min-width: 180px; max-width: 280px;
     background: var(--surface-1); color: var(--text-primary);
     border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px;
-    box-shadow: 0 6px 24px rgba(0,0,0,0.14); font-size: 12px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.22), 0 1px 3px rgba(0,0,0,0.10); font-size: 12px;
   }
   .tt-h { display: flex; gap: 7px; align-items: center; font-weight: 600; font-size: 13px; margin-bottom: 5px; }
   .tt-r { display: flex; justify-content: space-between; gap: 16px; color: var(--text-secondary); }
@@ -209,8 +209,8 @@
       <div class="status" id="status">Loading the sheet…</div>
     </div>
   </div>
+  <div class="tip" id="tip" role="tooltip" hidden></div>
 </div>
-<div class="tip" id="tip" role="tooltip" hidden></div>
 
 <!--SNAPSHOT-->
 <script>
@@ -366,7 +366,7 @@
 
   // ---------- tooltip ----------
   const tip = $('#tip');
-  function showTip(html, evt) { tip.innerHTML = html; tip.hidden = false; moveTip(evt); }
+  function showTip(html, evt) { tip.innerHTML = html; tip.hidden = false; tipShownAt = performance.now(); moveTip(evt); }
   function moveTip(evt) {
     const pad = 14, r = tip.getBoundingClientRect();
     let x = evt.clientX + pad, y = evt.clientY + pad;
@@ -375,6 +375,11 @@
     tip.style.left = Math.max(8, x) + 'px'; tip.style.top = Math.max(8, y) + 'px';
   }
   function hideTip() { tip.hidden = true; }
+  // On touch screens "hover" happens on tap, and the finger lifting would close the card at once.
+  // So for touch, keep it open until the next tap somewhere else, or a scroll.
+  let tipShownAt = 0;
+  document.addEventListener('pointerdown', e => { if (e.pointerType === 'touch' && performance.now() - tipShownAt > 80) hideTip(); });
+  addEventListener('scroll', hideTip, { passive: true });
   const ttRow = (k, v) => `<div class="tt-r"><span>${k}</span><b>${v}</b></div>`;
   function carTip(c) {
     return `<div class="tt-h"><span class="sw" style="background:${ownerVar(c.owner)}"></span>${esc(c.name)}</div>`
@@ -390,7 +395,7 @@
   function hoverable(node, html) {
     node.addEventListener('pointerenter', e => showTip(typeof html === 'function' ? html() : html, e));
     node.addEventListener('pointermove', moveTip);
-    node.addEventListener('pointerleave', hideTip);
+    node.addEventListener('pointerleave', e => { if (e.pointerType !== 'touch') hideTip(); });
   }
   const legendHTML = owners => `<div class="legend">${owners.map(o => `<span><i class="sw" style="background:${ownerVar(o)}"></i>${esc(o)}</span>`).join('')}</div>`;
 
@@ -484,7 +489,7 @@
   // ---------- timeline ----------
   function renderTimeline() {
     const host = $('#timeline'); host.innerHTML = ''; hideTip();
-    const W = Math.max(320, host.clientWidth);
+    const W = Math.max(240, host.clientWidth);
     const [x0, x1] = domain();
     const labelW = W < 560 ? 0 : 78, padR = 8, axisH = 22, ROW = 20, BAR = 16, GROUP_GAP = 18, GROUP_HEAD = W < 560 ? 18 : 0;
     const plotL = labelW, plotR = W - padR;
@@ -566,7 +571,7 @@
   // ---------- garage size ----------
   function renderGarage() {
     const host = $('#garage'); host.innerHTML = '';
-    const W = Math.max(300, host.clientWidth), H = 230;
+    const W = Math.max(240, host.clientWidth), H = 230;
     const m = { l: 30, r: 70, t: 12, b: 26 };
     const [x0] = domain(); const x1 = NOW + 1;
     const owners = shownOwners();
@@ -619,7 +624,7 @@
       if (series.length === 1) html += `<div style="margin-top:5px;color:var(--text-secondary)">${ownedNames(series[0].owner).map(esc).join('<br>')}</div>`;
       showTip(html, e);
     });
-    overlay.addEventListener('pointerleave', () => { cross.style.display = 'none'; dots.forEach(d => d.style.display = 'none'); hideTip(); });
+    overlay.addEventListener('pointerleave', e => { if (e.pointerType === 'touch') return; cross.style.display = 'none'; dots.forEach(d => d.style.display = 'none'); hideTip(); });
   }
 
   // ---------- how long cars stay (histogram) ----------
@@ -640,8 +645,11 @@
       const inBin = cars.filter(c => c.held >= lo && c.held < hi);
       return { label, cars: inBin, counts: Object.fromEntries(owners.map(o => [o, inBin.filter(c => c.owner === o).length])), total: inBin.length };
     });
-    const W = Math.max(300, host.clientWidth), H = 230;
-    const m = { l: 30, r: 8, t: 20, b: 26 };
+    const W = Math.max(240, host.clientWidth);
+    // On narrow screens, split each label onto two lines ("3–6" / "mo") so they don't run together.
+    const twoLine = (W - 38) / HELD_BINS.length < 56;
+    const H = twoLine ? 242 : 230;
+    const m = { l: 30, r: 8, t: 20, b: twoLine ? 38 : 26 };
     const yTicks = niceTicks(0, Math.max(1, ...bins.map(b => b.total)), 4).filter(Number.isInteger);
     const yTop = yTicks[yTicks.length - 1];
     const band = (W - m.l - m.r) / bins.length, colW = Math.min(24, band * 0.6);
@@ -666,7 +674,14 @@
         y = y0 - 2;
       });
       if (b.total) el('text', { x: cx, y: ys(b.total) - 6, 'text-anchor': 'middle', style: 'font-size:12px;fill:var(--text-primary);font-variant-numeric:tabular-nums' }, svg).textContent = b.total;
-      el('text', { x: cx, y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = b.label;
+      if (twoLine) {
+        const cut = b.label.lastIndexOf(' ');
+        const t = el('text', { x: cx, y: H - 20, 'text-anchor': 'middle', class: 'tick' }, svg);
+        el('tspan', { x: cx }, t).textContent = b.label.slice(0, cut);
+        el('tspan', { x: cx, dy: 13 }, t).textContent = b.label.slice(cut + 1);
+      } else {
+        el('text', { x: cx, y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = b.label;
+      }
       const hit = el('rect', { x: m.l + band * i, y: m.t, width: band, height: H - m.t - m.b, fill: 'transparent' }, svg);
       hoverable(hit, () => {
         const names = b.cars.slice().sort((p, q) => q.held - p.held).map(c => `${esc(c.name)} <span style="color:var(--text-muted)">${fmtHeld(c.held)}</span>`);
@@ -687,18 +702,26 @@
   function renderHeld() {
     const host = $('#held'); host.innerHTML = '';
     const LIMIT = 20;
-    const cars = shownCars().slice().sort((a, b) => b.held - a.held || a.inM - b.inM);
+    // Follow the timeline window: include every car owned at any point in it, showing its full time held.
+    const [x0] = domain();
+    const RANGE_WORDS = { all: '', '2018': ' owned since 2018', '5y': ' owned in the last 5 years', '2y': ' owned in the last 2 years', '1y': ' owned in the last 12 months', ytd: ' owned this year' };
+    const when = RANGE_WORDS[state.range] || '';
+    const cars = shownCars().filter(c => state.range === 'all' || c.current || c.outM >= x0)
+      .sort((a, b) => b.held - a.held || a.inM - b.inM);
     const list = state.heldAll ? cars : cars.slice(0, LIMIT);
     const more = $('#heldMore');
     more.hidden = cars.length <= LIMIT;
     more.textContent = state.heldAll ? `Show top ${LIMIT}` : `Show all ${cars.length}`;
     more.onclick = () => { state.heldAll = !state.heldAll; renderHeld(); };
     $('#heldDesc').textContent = state.heldAll || cars.length <= LIMIT
-      ? `All ${cars.length} cars, longest first. Cars still owned count their time so far.`
-      : `The ${LIMIT} longest-held of ${cars.length} cars. Cars still owned count their time so far.`;
+      ? `All ${cars.length} cars${when}, longest first. Cars still owned count their time so far.`
+      : `The ${LIMIT} longest-held of ${cars.length} cars${when}. Cars still owned count their time so far.`;
 
-    const W = Math.max(300, host.clientWidth), ROW = 22, BAR = 14, axisH = 20;
-    const labelW = Math.round(Math.min(250, Math.max(130, W * 0.28))), padR = 130;
+    const W = Math.max(240, host.clientWidth), ROW = 22, BAR = 14, axisH = 20;
+    // Phones: narrower name column and shorter value text so the bars keep most of the width.
+    const narrow = W < 520;
+    const labelW = narrow ? Math.round(Math.max(96, W * 0.34)) : Math.round(Math.min(250, Math.max(130, W * 0.28)));
+    const padR = narrow ? 82 : 130;
     const plotW = Math.max(60, W - labelW - padR);
     const maxH = Math.max(12, ...list.map(c => c.held));
     const yrStep = [1, 2, 5, 10].find(st => plotW / (maxH / 12 / st) >= 50) || 10;
@@ -719,7 +742,7 @@
       el('path', { d: `M${x0},${y}H${x0 + w - r}A${r},${r} 0 0 1 ${x0 + w},${y + r}V${y + BAR - r}A${r},${r} 0 0 1 ${x0 + w - r},${y + BAR}H${x0}Z`, style: `fill:${ownerVar(c.owner)}` }, svg);
       const t = el('text', { x: x0 + w + 6, y: y + BAR / 2 + 4, style: 'font-size:12px;fill:var(--text-primary);font-variant-numeric:tabular-nums' }, svg);
       t.textContent = fmtHeld(c.held);
-      if (c.current) { const ts = el('tspan', { style: 'fill:var(--text-muted)' }, t); ts.textContent = ' · still owned'; }
+      if (c.current) { const ts = el('tspan', { style: 'fill:var(--text-muted)' }, t); ts.textContent = narrow ? ' · now' : ' · still owned'; }
       const hit = el('rect', { x: 0, y: yRow, width: W, height: ROW, fill: 'transparent' }, svg);
       hoverable(hit, () => carTip(c));
     });
@@ -755,7 +778,7 @@
       const counts = Object.fromEntries(owners.map(o => [o, rest.reduce((s, r) => s + r.counts[o], 0)]));
       rows = rows.slice(0, MAX - 1).concat([{ make: `Other (${rest.length} makes)`, others: rest.map(r => r.make), counts, total: rest.reduce((s, r) => s + r.total, 0) }]);
     }
-    const W = Math.max(300, host.clientWidth), ROW = 22, BAR = 14, labelW = 128, padR = 34;
+    const W = Math.max(240, host.clientWidth), ROW = 22, BAR = 14, labelW = 128, padR = 34;
     const H = rows.length * ROW + 4;
     const maxT = Math.max(1, ...rows.map(r => r.total));
     const xs = v => v / maxT * (W - labelW - padR);
