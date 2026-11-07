@@ -110,6 +110,7 @@
 
   /* Stat tiles */
   .owner-row { display: grid; grid-template-columns: 120px repeat(5, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
+  .tiles-cap { font-size: 12px; color: var(--text-muted); margin: -4px 0 10px; }
   .owner-row + .owner-row { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--grid); }
   .owner-name { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
   .tile .label { font-size: 12px; color: var(--text-secondary); }
@@ -470,36 +471,44 @@
   }
 
   // ---------- stat tiles ----------
+  const RANGE_LABEL = { all: 'All time', '2018': 'Since 2018', '5y': 'Last 5 years', '2y': 'Last 2 years', '1y': 'Last 12 months', ytd: 'Year to date' };
+  // The tiles follow the time window: cars owned at any point in it, and sales made in it.
+  // "In the garage now" and "Garage value" are always about today.
   function renderTiles() {
+    const all = state.range === 'all';
+    const [x0] = domain();
     const rows = shownOwners().map(o => {
-      const cars = DATA.cars.filter(c => c.owner === o);
-      const cur = cars.filter(c => c.current);
-      const sold = cars.filter(c => !c.current);
-      const withPl = sold.filter(c => c.pl != null);
+      const mine = DATA.cars.filter(c => c.owner === o);
+      const owned = all ? mine : mine.filter(c => c.current || c.outM >= x0);   // owned during the window
+      const bought = owned.filter(c => c.inM >= x0);
+      const soldIn = owned.filter(c => !c.current && (all || c.outM >= x0));    // sold during the window
+      const cur = mine.filter(c => c.current);
+      const withPl = soldIn.filter(c => c.pl != null);
       const realized = withPl.reduce((s, c) => s + c.pl, 0);
       const value = cur.reduce((s, c) => s + (c.est != null ? c.est : (c.inPrice || 0)), 0);
-      const avgHold = sold.length ? Math.round(sold.reduce((s, c) => s + c.held, 0) / sold.length) : null;
-      const longest = cars.slice().sort((a, b) => b.held - a.held)[0];
-      const first = cars.slice().sort((a, b) => a.inM - b.inM)[0];
+      const avgHold = soldIn.length ? Math.round(soldIn.reduce((s, c) => s + c.held, 0) / soldIn.length) : null;
+      const longest = owned.slice().sort((a, b) => b.held - a.held)[0];
+      const first = mine.slice().sort((a, b) => a.inM - b.inM)[0];
       const best = withPl.slice().sort((a, b) => b.pl - a.pl)[0];
       const makeCounts = {};
-      cars.forEach(c => { makeCounts[c.make] = (makeCounts[c.make] || 0) + 1; });
+      owned.forEach(c => { makeCounts[c.make] = (makeCounts[c.make] || 0) + 1; });
       const topMake = Object.entries(makeCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
-      const quickest = sold.slice().sort((a, b) => a.held - b.held || b.outM - a.outM)[0];
+      const quickest = soldIn.slice().sort((a, b) => a.held - b.held || b.outM - a.outM)[0];
+      const noSales = all ? 'no sales yet' : 'no sales in this window';
       const tile = (label, value, note, cls) => `<div class="tile"><div class="label">${label}</div><div class="value ${cls || ''}">${value}</div><div class="note" title="${esc(note || '')}">${esc(note || '')}</div></div>`;
       return `<div class="owner-row">
         <div class="owner-name"><span class="sw" style="background:${ownerVar(o)}"></span>${esc(o)}</div>
-        ${tile('Cars owned', cars.length, first ? 'since ' + Math.floor(first.inM / 12) : '')}
-        ${tile('In the garage now', cur.length, sold.length + ' sold')}
+        ${tile('Cars owned', owned.length, all ? (first ? 'since ' + Math.floor(first.inM / 12) : '') : `${bought.length} bought · ${soldIn.length} sold`)}
+        ${tile('In the garage now', cur.length, all ? soldIn.length + ' sold' : 'today')}
         ${state.money ? `
           ${tile('Garage value', fmtCompact(value), 'estimated, current cars')}
-          ${tile('Gain / loss on sales', fmtSigned(realized), best ? 'best: ' + best.name + ' ' + fmtSigned(best.pl) : withPl.length + ' sales with prices', realized > 0 ? 'pos' : realized < 0 ? 'neg' : '')}` : `
-          ${tile('Favorite make', topMake ? esc(topMake[0]) : '—', topMake ? topMake[1] + ' of ' + cars.length + ' cars' : '')}
-          ${tile('Quickest flip', quickest ? fmtHeld(quickest.held) : '—', quickest ? quickest.name : '')}`}
-        ${tile('Average time held', fmtHeld(avgHold), longest ? 'longest: ' + longest.name : '')}
+          ${tile('Gain / loss on sales', withPl.length ? fmtSigned(realized) : '—', best ? 'best: ' + best.name + ' ' + fmtSigned(best.pl) : noSales, realized > 0 ? 'pos' : realized < 0 ? 'neg' : '')}` : `
+          ${tile('Favorite make', topMake ? esc(topMake[0]) : '—', topMake ? topMake[1] + ' of ' + owned.length + ' cars' : '')}
+          ${tile('Quickest flip', quickest ? fmtHeld(quickest.held) : '—', quickest ? quickest.name : noSales)}`}
+        ${tile('Average time held', fmtHeld(avgHold), avgHold == null ? noSales : longest ? 'longest: ' + longest.name : '')}
       </div>`;
     });
-    $('#tiles').innerHTML = rows.join('');
+    $('#tiles').innerHTML = `<div class="tiles-cap">${RANGE_LABEL[state.range] || ''}</div>` + rows.join('');
   }
 
   // ---------- timeline ----------
