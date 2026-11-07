@@ -38,6 +38,8 @@ function doPost(e) {
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('Index')
     .setTitle('Cellar Cars')
+    // Google serves the page from its own domain, so point at the icon in the GitHub repo.
+    .setFaviconUrl('https://raw.githubusercontent.com/markchang/cellar-cars/main/docs/favicon-32.png')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
