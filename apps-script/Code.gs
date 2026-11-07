@@ -1,8 +1,11 @@
 /**
  * Cellar Cars — read-only JSON API for the "Thing Doing - Cellar Cars Fleet" sheet.
  *
- * The page (docs/index.html, hosted on GitHub Pages) POSTs a passphrase here and
- * gets the fleet rows back as JSON. This script never writes to the sheet.
+ * The same page (docs/index.html) works from two addresses:
+ *  - GitHub Pages: the page POSTs a passphrase to this script's /exec URL (doPost) and gets JSON back.
+ *  - The /exec URL itself: doGet serves the page (pasted into this project as the "Index" HTML file),
+ *    and the page calls getFleetDataForKey() directly.
+ * Either way the passphrase is required. This script never writes to the sheet.
  *
  * Setup: Project Settings → Script Properties → add API_KEY = <your passphrase>.
  * The passphrase lives only in Script Properties, never in this file, because
@@ -28,19 +31,26 @@ function doPost(e) {
   } catch (err) {
     return json_({ error: 'bad_request' });
   }
-  const expected = PropertiesService.getScriptProperties().getProperty('API_KEY');
-  if (!expected) return json_({ error: 'not_configured', message: 'Set the API_KEY script property.' });
-  if (key !== expected) return json_({ error: 'unauthorized' });
-  try {
-    return json_(getFleetData_());
-  } catch (err) {
-    return json_({ error: 'read_failed', message: String(err && err.message || err) });
-  }
+  return json_(getFleetDataForKey(key));
 }
 
-/** Opening the /exec URL directly just confirms the API is up; it never returns data. */
+/** Opening the /exec URL in a browser serves the dashboard page. It shows no data until the passphrase is entered. */
 function doGet() {
-  return json_({ ok: true, message: 'Cellar Cars API. POST {"key": "..."} to get data.' });
+  return HtmlService.createHtmlOutputFromFile('Index')
+    .setTitle('Cellar Cars')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/** Called by the page when Google hosts it (google.script.run), and by doPost. */
+function getFleetDataForKey(key) {
+  const expected = PropertiesService.getScriptProperties().getProperty('API_KEY');
+  if (!expected) return { error: 'not_configured', message: 'Set the API_KEY script property.' };
+  if (String(key || '') !== expected) return { error: 'unauthorized' };
+  try {
+    return getFleetData_();
+  } catch (err) {
+    return { error: 'read_failed', message: String(err && err.message || err) };
+  }
 }
 
 function json_(obj) {

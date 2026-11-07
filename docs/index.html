@@ -779,16 +779,30 @@
     });
   }
 
+  // Two ways to get the data, from the same page:
+  //  - Opened at the Apps Script /exec URL: Google serves this page, so call the server directly.
+  //  - Opened anywhere else (GitHub Pages): POST to the /exec URL. text/plain keeps it a "simple"
+  //    request with no CORS preflight, which Apps Script can't answer.
+  const HOSTED_BY_APPS_SCRIPT = !!(window.google && google.script && google.script.run);
+  function viaScriptRun(key) {
+    return new Promise((resolve, reject) =>
+      google.script.run.withSuccessHandler(resolve).withFailureHandler(reject).getFleetDataForKey(key));
+  }
+  async function viaFetch(key) {
+    const res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key }) });
+    return res.json();
+  }
+
   async function load(key) {
     $('#sub').textContent = 'Loading the sheet…';
     $('#app').innerHTML = '<div class="status">Loading the sheet…</div>';
     let data;
     try {
-      // text/plain keeps this a "simple" request: no CORS preflight, which Apps Script can't answer.
-      const res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key }) });
-      data = await res.json();
+      data = HOSTED_BY_APPS_SCRIPT ? await viaScriptRun(key) : await viaFetch(key);
     } catch (err) {
-      return fail('couldn’t reach the Apps Script API. Check API_URL in index.html and that the deployment allows “Anyone”.');
+      return fail(HOSTED_BY_APPS_SCRIPT
+        ? 'the Apps Script call failed: ' + (err && err.message || err)
+        : 'couldn’t reach the Apps Script API. Check API_URL in index.html and that the deployment allows “Anyone”.');
     }
     if (data.error === 'unauthorized') { store.clear(); return showGate('That passphrase didn’t work.'); }
     if (data.error) return fail(data.message || data.error);
@@ -796,13 +810,13 @@
     init(data);
     const forget = document.createElement('a');
     forget.href = '#'; forget.textContent = 'Forget passphrase';
-    forget.addEventListener('click', e => { e.preventDefault(); store.clear(); location.reload(); });
+    forget.addEventListener('click', e => { e.preventDefault(); store.clear(); $('#controls').hidden = true; showGate(); });
     $('#sub').append(' · ', forget);
   }
 
   if (window.__SNAPSHOT__) {
     init(window.__SNAPSHOT__);
-  } else if (!API_URL || API_URL.indexOf('PASTE_') === 0) {
+  } else if (!HOSTED_BY_APPS_SCRIPT && (!API_URL || API_URL.indexOf('PASTE_') === 0)) {
     fail('set API_URL near the top of the script in index.html to your Apps Script /exec URL.');
   } else if (store.get()) {
     load(store.get());

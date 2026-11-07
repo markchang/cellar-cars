@@ -2,14 +2,18 @@
 
 A read-only dashboard for the "Thing Doing - Cellar Cars Fleet" Google Sheet.
 
+The same page works at two addresses:
+
 ```
-GitHub Pages (docs/index.html)  ──POST passphrase──▶  Apps Script (apps-script/Code.gs)  ──reads──▶  Google Sheet
-         public page                                   runs as Mark, checks passphrase
+markchang.net/cellar-cars/ (GitHub Pages) ──POST passphrase──▶ ┐
+                                                                ├─ Apps Script (runs as Mark, checks passphrase) ──reads──▶ Google Sheet
+script.google.com/…/exec (Google serves the page) ──────────────▶ ┘
 ```
 
-- **`docs/index.html`**: the page. It has no data in it, so it's safe to host publicly.
-- **`apps-script/Code.gs`**: a small API that returns the **Mark's Fleet** and **Jostin's Fleet** rows
-  as JSON, but only to someone who sends the right passphrase. It never writes to the sheet.
+- **`docs/index.html`**: the page. It has no data in it, so it's safe to host publicly. The same file is
+  pasted into the Apps Script project as `Index`, so Google can serve it too.
+- **`apps-script/Code.gs`**: returns the **Mark's Fleet** and **Jostin's Fleet** rows, but only to someone
+  with the right passphrase. Opening its `/exec` URL in a browser serves the dashboard. It never writes to the sheet.
 
 The page reloads the sheet every time you open it, so edits to the sheet show up on refresh.
 
@@ -21,7 +25,9 @@ The page reloads the sheet every time you open it, so edits to the sheet show up
    - Turn on **Show "appsscript.json" manifest file in editor**.
    - Under **Script Properties**, click **Add script property**. Set the name to `API_KEY` and the value to a
      long passphrase you'll share with Jostin, for example four random words. Click **Save**.
-4. **Editor**: replace `Code.gs` and `appsscript.json` with the files in `apps-script/`. Save with Cmd+S.
+4. **Editor**: replace `Code.gs` and `appsscript.json` with the files in `apps-script/`. Then click **+** next to
+   Files → **HTML**, name it `Index` (the editor adds `.html`), and paste in all of `docs/index.html`.
+   Save with Cmd+S.
 5. Pick `testRead` in the function menu at the top and click **Run**. Approve the access prompt
    (choose **Advanced → Go to Cellar Cars API** if Google says the app isn't verified). It asks only
    for access to *this* spreadsheet. Google has no read-only version of that permission, but the
@@ -31,9 +37,11 @@ The page reloads the sheet every time you open it, so edits to the sheet show up
    - **Execute as:** Me
    - **Who has access:** Anyone
    - Click **Deploy** and copy the **Web app URL** (ends in `/exec`).
+7. Open the `/exec` URL. You should see the dashboard's passphrase prompt. This is the "direct Google"
+   address, served over HTTPS by Google, and it works without GitHub Pages.
 
 "Anyone" is required because a page on github.io can't use your Google sign-in. Anyone can open
-the URL, but without the passphrase it returns only `{"error":"unauthorized"}`.
+the URL, but without the passphrase it shows only the prompt (or `{"error":"unauthorized"}` to the API).
 
 ## Part 2: Publish the page on GitHub Pages
 
@@ -65,6 +73,7 @@ the URL, but without the passphrase it returns only `{"error":"unauthorized"}`.
 ## Making changes later
 
 - **Page changes** (`docs/index.html`): commit and push. GitHub Pages republishes within a minute or two.
+  For the Google address, also paste the file into `Index` in the editor and deploy a new version (next bullet).
 - **API changes** (`Code.gs`): paste the new code into the Apps Script editor, then **Deploy → Manage
   deployments → pencil → Version: New version → Deploy**. The URL stays the same.
 - **Change the passphrase**: edit the `API_KEY` script property. No redeploy is needed. Everyone will be
