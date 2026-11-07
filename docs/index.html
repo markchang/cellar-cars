@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cellar Cars</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --axis:           #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --wash:           rgba(11,11,11,0.04);
+    --good:           #006300;
+    --bad:            #b42828;
+    --s1:             #2a78d6;  /* owner 1 — blue */
+    --s2:             #eb6834;  /* owner 2 — orange */
+    --s3:             #1baf7a;  /* owner 3 — aqua, if a third fleet tab is ever added */
+  }
+  @media (prefers-color-scheme: dark) {
+    .viz-root {
+      color-scheme: dark;
+      --page:           #0d0d0d;
+      --surface-1:      #1a1a19;
+      --text-primary:   #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --axis:           #383835;
+      --border:         rgba(255,255,255,0.10);
+      --wash:           rgba(255,255,255,0.05);
+      --good:           #0ca30c;
+      --bad:            #e66767;
+      --s1:             #3987e5;
+      --s2:             #d95926;
+      --s3:             #199e70;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .viz-root {
+    min-height: 100vh;
+    background: var(--page);
+    color: var(--text-primary);
+    padding: 28px clamp(14px, 4vw, 40px) 56px;
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; }
+
+  header.top {
+    display: flex; flex-wrap: wrap; gap: 16px 24px;
+    align-items: flex-end; justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  h1 { font-size: 26px; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
+  .sub { margin: 4px 0 0; color: var(--text-secondary); }
+  .sub a { color: inherit; }
+  .controls[hidden] { display: none; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .ctl-label { font-size: 12px; color: var(--text-muted); margin-right: 2px; }
+  .seg {
+    display: inline-flex; padding: 2px; gap: 2px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+  }
+  .seg button {
+    font: inherit; font-size: 13px; color: var(--text-secondary);
+    background: none; border: 0; border-radius: 6px; padding: 5px 11px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .seg button:hover { background: var(--wash); }
+  .seg button[aria-pressed="true"] { background: var(--wash); color: var(--text-primary); font-weight: 600; }
+  .seg button:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px 20px 16px; margin-bottom: 16px; min-width: 0;
+  }
+  .card-h { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+  .card h2 { font-size: 15px; font-weight: 600; margin: 0; }
+  .card .desc { margin: 2px 0 0; color: var(--text-secondary); font-size: 13px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-secondary); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 16px; }
+  .grid2 > .card { margin-bottom: 0; }
+  .grid2 { margin-bottom: 16px; }
+  @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
+
+  /* Stat tiles */
+  .owner-row { display: grid; grid-template-columns: 120px repeat(5, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
+  .owner-row + .owner-row { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--grid); }
+  .owner-name { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+  .tile .label { font-size: 12px; color: var(--text-secondary); }
+  .tile .value { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin-top: 2px; }
+  .tile .note { font-size: 12px; color: var(--text-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .value.pos { color: var(--good); }
+  .value.neg { color: var(--bad); }
+  @media (max-width: 860px) {
+    .owner-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .owner-name { grid-column: 1 / -1; }
+  }
+
+  /* Charts */
+  .chart { position: relative; width: 100%; }
+  .chart svg { display: block; overflow: visible; }
+  .chart text { font-family: inherit; }
+  .tick { font-size: 11px; fill: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .caption { font-size: 12px; color: var(--text-muted); margin: 8px 0 0; }
+
+  /* Current garage */
+  .garage-list { list-style: none; margin: 0; padding: 0; }
+  .garage-list li { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 9px 0; }
+  .garage-list li + li { border-top: 1px solid var(--grid); }
+  .g-name { font-weight: 600; }
+  .g-meta, .g-sub { font-size: 12px; color: var(--text-secondary); }
+  .g-val { text-align: right; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--text-muted); padding: 12px 0; }
+
+  /* Table */
+  .table-tools { display: flex; gap: 10px; align-items: center; }
+  input[type="search"] {
+    font: inherit; font-size: 13px; color: var(--text-primary);
+    background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; width: 220px;
+  }
+  .table-scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  th { font-weight: 600; font-size: 12px; color: var(--text-secondary); cursor: pointer; user-select: none; }
+  th:hover { color: var(--text-primary); }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th[aria-sort="ascending"]::after { content: " ↑"; }
+  th[aria-sort="descending"]::after { content: " ↓"; }
+  tbody tr:hover { background: var(--wash); }
+  td.pos { color: var(--good); }
+  td.neg { color: var(--bad); }
+  .pill { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--wash); color: var(--text-secondary); margin-left: 6px; }
+
+  /* Tooltip */
+  .tip {
+    position: fixed; z-index: 10; pointer-events: none; min-width: 180px; max-width: 280px;
+    background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.14); font-size: 12px;
+  }
+  .tt-h { display: flex; gap: 7px; align-items: center; font-weight: 600; font-size: 13px; margin-bottom: 5px; }
+  .tt-r { display: flex; justify-content: space-between; gap: 16px; color: var(--text-secondary); }
+  .tt-r b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .gate { max-width: 440px; margin: 40px auto; }
+  .gate-row { display: flex; gap: 8px; margin-top: 12px; }
+  .gate input {
+    flex: 1; font: inherit; color: var(--text-primary); background: var(--page);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  }
+  .gate button {
+    font: inherit; font-weight: 600; color: #fff; background: var(--s1);
+    border: 0; border-radius: 8px; padding: 8px 14px; cursor: pointer;
+  }
+  .gate-err { color: var(--bad); margin: 10px 0 0; font-size: 13px; }
+  .status { padding: 60px 0; text-align: center; color: var(--text-secondary); }
+  .status.error { color: var(--bad); }
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <div class="wrap">
+    <header class="top">
+      <div>
+        <h1>Cellar Cars</h1>
+        <p class="sub" id="sub">Loading the sheet…</p>
+      </div>
+      <div class="controls" id="controls" hidden>
+        <div class="seg" id="ownerSeg" role="group" aria-label="Show owner"></div>
+        <span class="ctl-label">Timeline</span>
+        <div class="seg" id="rangeSeg" role="group" aria-label="Timeline range">
+          <button type="button" data-v="all" aria-pressed="true">All time</button>
+          <button type="button" data-v="2016">Since 2016</button>
+          <button type="button" data-v="5y">Last 5 years</button>
+        </div>
+      </div>
+    </header>
+
+    <div id="app">
+      <div class="status" id="status">Loading the sheet…</div>
+    </div>
+  </div>
+</div>
+<div class="tip" id="tip" role="tooltip" hidden></div>
+
+<!--SNAPSHOT-->
+<script>
+(function () {
+  'use strict';
+
+  // Your Apps Script web app URL (Deploy → Manage deployments → Web app URL, ends in /exec).
+  // It's fine for this to be public: the API returns nothing without the passphrase.
+  const API_URL = 'https://script.google.com/macros/s/AKfycby61qCws6SpW8og2X8Ok_mNTqRetYKLnxKTpo2TingMdGtc6SZcfUfErzXOa1gPzdvr/exec';
+
+  // ---------- helpers ----------
+  const $ = (s, r = document) => r.querySelector(s);
+  const NS = 'http://www.w3.org/2000/svg';
+  function el(tag, attrs, parent) {
+    const e = document.createElementNS(NS, tag);
+    if (attrs) for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const today = new Date();
+  const NOW = today.getFullYear() * 12 + today.getMonth();
+  const fmtMonth = m => MONTHS[((m % 12) + 12) % 12] + ' ' + Math.floor(m / 12);
+  const fmtMoney = n => n == null ? '—' : (n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n)).toLocaleString('en-US');
+  const fmtSigned = n => n == null ? '—' : (n > 0 ? '+' : n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n)).toLocaleString('en-US');
+  function fmtCompact(n) {
+    const a = Math.abs(n);
+    let s;
+    if (a >= 1e6) s = (a / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+    else if (a >= 1e4) s = Math.round(a / 1e3) + 'K';
+    else if (a >= 1e3) s = (a / 1e3).toFixed(1).replace(/\.0$/, '') + 'K';
+    else s = String(Math.round(a));
+    return (n < 0 ? '−' : n > 0 ? '' : '') + '$' + s;
+  }
+  function fmtHeld(mo) {
+    if (mo == null) return '—';
+    if (mo < 1) return '< 1 mo';
+    if (mo < 12) return mo + ' mo';
+    const y = Math.floor(mo / 12), r = mo % 12;
+    return y + ' yr' + (r ? ' ' + r + ' mo' : '');
+  }
+  function niceStep(span, count) {
+    const raw = span / Math.max(1, count);
+    const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+    const f = raw / pow;
+    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * pow;
+  }
+  function niceTicks(min, max, count) {
+    if (min === max) { max = min + 1; }
+    const step = niceStep(max - min, count);
+    const lo = Math.floor(min / step) * step, hi = Math.ceil(max / step) * step;
+    const out = [];
+    for (let v = lo; v <= hi + step / 2; v += step) out.push(Math.round(v * 1e6) / 1e6);
+    return out;
+  }
+  const measureCtx = document.createElement('canvas').getContext('2d');
+  function textWidth(s, font) { measureCtx.font = font; return measureCtx.measureText(s).width; }
+  const FONT = getComputedStyle(document.body).fontFamily;
+
+  // ---------- parsing ----------
+  function parseMonth(s) {
+    s = (s || '').trim();
+    if (!s) return null;
+    let m = s.match(/^(\d{1,2})\/(\d{4})$/);
+    if (m) return +m[2] * 12 + (+m[1] - 1);
+    m = s.match(/^(\d{1,2})\/\d{1,2}\/(\d{4})$/);
+    if (m) return +m[2] * 12 + (+m[1] - 1);
+    const d = new Date(s);
+    return isNaN(d) ? null : d.getFullYear() * 12 + d.getMonth();
+  }
+  function parseMoney(s) {
+    s = (s || '').trim();
+    if (!s) return null;
+    const neg = /^[-−(]/.test(s);
+    const n = parseFloat(s.replace(/[^0-9.]/g, ''));
+    if (isNaN(n)) return null;
+    return neg ? -n : n;
+  }
+
+  const MAKES = ['Alfa Romeo', 'Aston Martin', 'Land Rover', 'Mercedes-Benz', 'Acura', 'Audi', 'BMW', 'Chevrolet',
+    'Dodge', 'Ferrari', 'Fiat', 'Ford', 'Honda', 'Hyundai', 'Jaguar', 'Jeep', 'Kia', 'Lamborghini', 'Lancia',
+    'Lexus', 'Lotus', 'Mazda', 'McLaren', 'Mini', 'Mitsubishi', 'Nissan', 'Peugeot', 'Porsche', 'Rivian', 'Saab',
+    'Subaru', 'Tesla', 'Toyota', 'Volvo', 'Volkswagen', 'Winnebago'];
+  // Names in the sheet that don't start with the make.
+  const ALIASES = [
+    [/^mercedes\b/i, 'Mercedes-Benz'], [/^vw\b/i, 'Volkswagen'], [/\bmr2\b/i, 'Toyota'], [/\bzhp\b/i, 'BMW'],
+    [/\bforester\b|\bimpreza\b|\bwrx\b/i, 'Subaru'], [/\bmiata\b/i, 'Mazda'], [/\b(911|944|cayman|boxster)\b/i, 'Porsche'],
+    [/\bcelica\b|\bland cruiser\b/i, 'Toyota'],
+  ];
+  function splitName(name) {
+    const m = name.match(/^((?:19|20)\d{2})\s+(.*)$/);
+    const year = m ? +m[1] : null;
+    const rest = m ? m[2] : name;
+    let make = MAKES.find(k => rest.toLowerCase().startsWith(k.toLowerCase()));
+    if (!make) { const a = ALIASES.find(([re]) => re.test(rest)); make = a ? a[1] : rest.split(/\s+/)[0]; }
+    return { year, make };
+  }
+
+  function normalize(raw) {
+    const owners = raw.owners && raw.owners.length ? raw.owners : [...new Set(raw.cars.map(c => c.owner))];
+    const cars = raw.cars.map((r, i) => {
+      const inM = parseMonth(r.in);
+      const outM = parseMonth(r.out);
+      if (inM == null) return null;
+      const current = outM == null;
+      const endM = current ? NOW : outM;
+      const inPrice = parseMoney(r.inPrice), outPrice = parseMoney(r.outPrice), est = parseMoney(r.est);
+      const { year, make } = splitName(r.car);
+      return {
+        id: i, owner: r.owner, name: r.car, color: r.color || '', year, make,
+        inM, outM, current, endM,
+        barEnd: Math.max(endM, inM) + (current ? 1 : 0) + (endM <= inM ? 1 : 0),
+        held: Math.max(0, endM - inM),
+        inPrice, outPrice, est,
+        pl: !current && inPrice != null && outPrice != null ? outPrice - inPrice : null,
+      };
+    }).filter(Boolean);
+    return { owners, cars, title: raw.title, url: raw.url, generatedAt: raw.generatedAt, isSnapshot: !!raw.isSnapshot };
+  }
+
+  // ---------- state ----------
+  let DATA = null;
+  const state = { owner: 'all', range: 'all', sort: { key: 'inM', dir: -1 }, q: '' };
+  const ownerVar = o => 'var(--s' + (DATA.owners.indexOf(o) + 1) + ')';
+  const shownOwners = () => state.owner === 'all' ? DATA.owners : [state.owner];
+  const shownCars = () => DATA.cars.filter(c => state.owner === 'all' || c.owner === state.owner);
+  function domain() {
+    const cars = shownCars();
+    const minIn = cars.length ? Math.min(...cars.map(c => c.inM)) : NOW - 60;
+    let x0 = Math.floor(minIn / 12) * 12;
+    if (state.range === '2016') x0 = Math.max(x0, 2016 * 12);
+    if (state.range === '5y') x0 = NOW - 60;
+    return [x0, NOW + 3];
+  }
+
+  // ---------- tooltip ----------
+  const tip = $('#tip');
+  function showTip(html, evt) { tip.innerHTML = html; tip.hidden = false; moveTip(evt); }
+  function moveTip(evt) {
+    const pad = 14, r = tip.getBoundingClientRect();
+    let x = evt.clientX + pad, y = evt.clientY + pad;
+    if (x + r.width > innerWidth - 8) x = evt.clientX - r.width - pad;
+    if (y + r.height > innerHeight - 8) y = evt.clientY - r.height - pad;
+    tip.style.left = Math.max(8, x) + 'px'; tip.style.top = Math.max(8, y) + 'px';
+  }
+  function hideTip() { tip.hidden = true; }
+  const ttRow = (k, v) => `<div class="tt-r"><span>${k}</span><b>${v}</b></div>`;
+  function carTip(c) {
+    return `<div class="tt-h"><span class="sw" style="background:${ownerVar(c.owner)}"></span>${esc(c.name)}</div>`
+      + ttRow('Owner', esc(c.owner))
+      + ttRow('Owned', `${fmtMonth(c.inM)} – ${c.current ? 'now' : fmtMonth(c.outM)}`)
+      + ttRow('Held', fmtHeld(c.held))
+      + (c.inPrice != null ? ttRow('Paid', fmtMoney(c.inPrice)) : '')
+      + (!c.current && c.outPrice != null ? ttRow('Sold for', fmtMoney(c.outPrice)) : '')
+      + (c.current && c.est != null ? ttRow('Est. value', fmtMoney(c.est)) : '')
+      + (c.pl != null ? ttRow('Gain / loss', fmtSigned(c.pl)) : '')
+      + (c.color ? ttRow('Color', esc(c.color)) : '');
+  }
+  function hoverable(node, html) {
+    node.addEventListener('pointerenter', e => showTip(typeof html === 'function' ? html() : html, e));
+    node.addEventListener('pointermove', moveTip);
+    node.addEventListener('pointerleave', hideTip);
+  }
+  const legendHTML = owners => `<div class="legend">${owners.map(o => `<span><i class="sw" style="background:${ownerVar(o)}"></i>${esc(o)}</span>`).join('')}</div>`;
+
+  // ---------- layout ----------
+  function renderShell() {
+    $('#app').innerHTML = `
+      <section class="card" id="tiles"></section>
+      <section class="card">
+        <div class="card-h">
+          <div><h2>Ownership timeline</h2><p class="desc">Each bar is one car, from purchase to sale. Bars that reach the “now” line are still in the garage.</p></div>
+          <div id="tlLegend"></div>
+        </div>
+        <div class="chart" id="timeline"></div>
+      </section>
+      <div class="grid2">
+        <section class="card">
+          <div class="card-h"><div><h2>Garage size over time</h2><p class="desc">How many cars each of you owned, month by month.</p></div><div id="gsLegend"></div></div>
+          <div class="chart" id="garage"></div>
+        </section>
+        <section class="card">
+          <div class="card-h"><div><h2>Gain or loss vs. time held</h2><p class="desc">Sold cars with both prices recorded. Above zero means it sold for more than it cost.</p></div><div id="scLegend"></div></div>
+          <div class="chart" id="scatter"></div>
+        </section>
+      </div>
+      <div class="grid2">
+        <section class="card">
+          <div class="card-h"><div><h2>In the garage now</h2><p class="desc" id="nowDesc"></p></div></div>
+          <div id="current"></div>
+        </section>
+        <section class="card">
+          <div class="card-h"><div><h2>Cars by make</h2><p class="desc">Every car ever owned, by manufacturer.</p></div><div id="mkLegend"></div></div>
+          <div class="chart" id="makes"></div>
+        </section>
+      </div>
+      <section class="card">
+        <div class="card-h">
+          <div><h2>Every car</h2><p class="desc" id="tableDesc"></p></div>
+          <div class="table-tools"><input type="search" id="search" placeholder="Search cars, makes, colors" aria-label="Search cars"></div>
+        </div>
+        <div class="table-scroll" id="table"></div>
+      </section>`;
+    $('#search').addEventListener('input', e => { state.q = e.target.value; renderTable(); });
+  }
+
+  function renderAll() {
+    const legend = legendHTML(shownOwners());
+    ['#tlLegend', '#gsLegend', '#scLegend', '#mkLegend'].forEach(s => { $(s).innerHTML = shownOwners().length > 1 ? legend : ''; });
+    renderTiles(); renderTimeline(); renderGarage(); renderScatter(); renderCurrent(); renderMakes(); renderTable();
+  }
+
+  // ---------- stat tiles ----------
+  function renderTiles() {
+    const rows = shownOwners().map(o => {
+      const cars = DATA.cars.filter(c => c.owner === o);
+      const cur = cars.filter(c => c.current);
+      const sold = cars.filter(c => !c.current);
+      const withPl = sold.filter(c => c.pl != null);
+      const realized = withPl.reduce((s, c) => s + c.pl, 0);
+      const value = cur.reduce((s, c) => s + (c.est != null ? c.est : (c.inPrice || 0)), 0);
+      const avgHold = sold.length ? Math.round(sold.reduce((s, c) => s + c.held, 0) / sold.length) : null;
+      const longest = cars.slice().sort((a, b) => b.held - a.held)[0];
+      const first = cars.slice().sort((a, b) => a.inM - b.inM)[0];
+      const best = withPl.slice().sort((a, b) => b.pl - a.pl)[0];
+      const tile = (label, value, note, cls) => `<div class="tile"><div class="label">${label}</div><div class="value ${cls || ''}">${value}</div><div class="note" title="${esc(note || '')}">${esc(note || '')}</div></div>`;
+      return `<div class="owner-row">
+        <div class="owner-name"><span class="sw" style="background:${ownerVar(o)}"></span>${esc(o)}</div>
+        ${tile('Cars owned', cars.length, first ? 'since ' + Math.floor(first.inM / 12) : '')}
+        ${tile('In the garage now', cur.length, sold.length + ' sold')}
+        ${tile('Garage value', fmtCompact(value), 'estimated, current cars')}
+        ${tile('Gain / loss on sales', fmtSigned(realized), best ? 'best: ' + best.name + ' ' + fmtSigned(best.pl) : withPl.length + ' sales with prices', realized > 0 ? 'pos' : realized < 0 ? 'neg' : '')}
+        ${tile('Average time held', fmtHeld(avgHold), longest ? 'longest: ' + longest.name : '')}
+      </div>`;
+    });
+    $('#tiles').innerHTML = rows.join('');
+  }
+
+  // ---------- timeline ----------
+  function renderTimeline() {
+    const host = $('#timeline'); host.innerHTML = ''; hideTip();
+    const W = Math.max(320, host.clientWidth);
+    const [x0, x1] = domain();
+    const labelW = W < 560 ? 0 : 78, padR = 8, axisH = 22, ROW = 20, BAR = 16, GROUP_GAP = 18, GROUP_HEAD = W < 560 ? 18 : 0;
+    const plotL = labelW, plotR = W - padR;
+    const xs = m => plotL + (m - x0) / (x1 - x0) * (plotR - plotL);
+
+    // Pack each owner's cars into as few rows as possible (cars that don't overlap share a row).
+    let y = axisH + 6;
+    const groups = shownOwners().map(o => {
+      const cars = DATA.cars.filter(c => c.owner === o && c.barEnd > x0).sort((a, b) => a.inM - b.inM || a.barEnd - b.barEnd);
+      const lanes = [];
+      cars.forEach(c => {
+        let i = lanes.findIndex(end => end <= c.inM);
+        if (i === -1) { i = lanes.length; lanes.push(0); }
+        lanes[i] = c.barEnd; c._lane = i;
+      });
+      const g = { owner: o, cars, y: y + GROUP_HEAD, h: Math.max(1, lanes.length) * ROW };
+      y = g.y + g.h + GROUP_GAP;
+      return g;
+    });
+    const H = y - GROUP_GAP + 8;
+    const svg = el('svg', { width: W, height: H, role: 'img', 'aria-label': 'Car ownership timeline' }, host);
+    const defs = el('defs', null, svg);
+    const clip = el('clipPath', { id: 'tlClip' }, defs);
+    el('rect', { x: plotL, y: 0, width: plotR - plotL, height: H }, clip);
+
+    // Year grid
+    const spanYears = (x1 - x0) / 12;
+    const step = [1, 2, 5, 10].find(s => (plotR - plotL) / (spanYears / s) >= 52) || 10;
+    for (let yr = Math.ceil(x0 / 12 / step) * step; yr * 12 <= x1; yr += step) {
+      const x = xs(yr * 12);
+      el('line', { x1: x, x2: x, y1: axisH, y2: H - 4, style: 'stroke:var(--grid)', 'stroke-width': 1 }, svg);
+      // Skip a year label that would collide with the "now" label.
+      if (Math.abs(x - xs(NOW + 1)) > 44) el('text', { x, y: axisH - 8, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = yr;
+    }
+    el('line', { x1: plotL, x2: plotR, y1: axisH, y2: axisH, style: 'stroke:var(--axis)' }, svg);
+
+    // "Now" marker
+    const nx = xs(NOW + 1);
+    el('line', { x1: nx, x2: nx, y1: axisH, y2: H - 4, style: 'stroke:var(--text-muted)', 'stroke-width': 1 }, svg);
+    el('text', { x: nx - 4, y: axisH - 8, 'text-anchor': 'end', class: 'tick', style: 'fill:var(--text-secondary);font-weight:600' }, svg).textContent = 'now';
+
+    const labelFont = `500 11px ${FONT}`;
+    groups.forEach(g => {
+      // Owner label
+      if (labelW) {
+        el('rect', { x: 0, y: g.y + 3, width: 10, height: 10, rx: 3, style: `fill:${ownerVar(g.owner)}` }, svg);
+        const t = el('text', { x: 16, y: g.y + 12, style: 'font-size:13px;font-weight:600;fill:var(--text-primary)' }, svg);
+        t.textContent = g.owner;
+        el('text', { x: 16, y: g.y + 27, class: 'tick' }, svg).textContent = g.cars.length + ' cars';
+      } else {
+        el('rect', { x: 0, y: g.y - GROUP_HEAD + 2, width: 10, height: 10, rx: 3, style: `fill:${ownerVar(g.owner)}` }, svg);
+        el('text', { x: 16, y: g.y - GROUP_HEAD + 11, style: 'font-size:12px;font-weight:600;fill:var(--text-primary)' }, svg).textContent = g.owner;
+      }
+      const layer = el('g', { 'clip-path': 'url(#tlClip)' }, svg);
+      g.cars.forEach(c => {
+        const bx = xs(c.inM) + 1, bxe = xs(c.barEnd) - 1;
+        const bw = Math.max(3, bxe - bx);
+        const by = g.y + c._lane * ROW + (ROW - BAR) / 2;
+        const r = Math.min(4, bw / 2);
+        const bar = el('rect', { x: bx, y: by, width: bw, height: BAR, rx: r, style: `fill:${ownerVar(c.owner)};cursor:default` }, layer);
+        if (c.current) bar.setAttribute('style', bar.getAttribute('style') + ';opacity:1');
+        else bar.setAttribute('opacity', '0.82');
+        // Label inside the bar when it fits in the visible part.
+        const visL = Math.max(bx, plotL), visW = bxe - visL;
+        const label = c.name;
+        const short = c.name.replace(/^(19|20)\d{2}\s+/, '');
+        const pick = [label, short].find(s => textWidth(s, labelFont) + 12 <= visW);
+        if (pick) {
+          const t = el('text', { x: visL + 6, y: by + BAR / 2 + 4, style: 'font-size:11px;font-weight:500;fill:#fff;pointer-events:none' }, layer);
+          t.textContent = pick;
+        }
+        // Generous invisible hit target
+        const hit = el('rect', { x: bx - 2, y: g.y + c._lane * ROW, width: Math.max(bw + 4, 8), height: ROW, fill: 'transparent' }, layer);
+        hoverable(hit, () => carTip(c));
+        hit.addEventListener('pointerenter', () => bar.setAttribute('opacity', '1'));
+        hit.addEventListener('pointerleave', () => { if (!c.current) bar.setAttribute('opacity', '0.82'); });
+      });
+    });
+  }
+
+  // ---------- garage size ----------
+  function renderGarage() {
+    const host = $('#garage'); host.innerHTML = '';
+    const W = Math.max(300, host.clientWidth), H = 230;
+    const m = { l: 30, r: 70, t: 12, b: 26 };
+    const [x0] = domain(); const x1 = NOW + 1;
+    const owners = shownOwners();
+    const months = []; for (let t = x0; t <= NOW; t++) months.push(t);
+    const owned = (o, t) => DATA.cars.filter(c => c.owner === o && c.inM <= t && (c.current || t < c.outM)).length;
+    const series = owners.map(o => ({ owner: o, vals: months.map(t => owned(o, t)) }));
+    const yMax = Math.max(1, ...series.flatMap(s => s.vals));
+    const yTicks = niceTicks(0, yMax, 4).filter(v => Number.isInteger(v));
+    const yTop = yTicks[yTicks.length - 1];
+    const xs = t => m.l + (t - x0) / (x1 - x0) * (W - m.l - m.r);
+    const ys = v => m.t + (1 - v / yTop) * (H - m.t - m.b);
+    const svg = el('svg', { width: W, height: H, role: 'img', 'aria-label': 'Number of cars owned over time' }, host);
+
+    yTicks.forEach(v => {
+      el('line', { x1: m.l, x2: W - m.r, y1: ys(v), y2: ys(v), style: `stroke:var(${v === 0 ? '--axis' : '--grid'})` }, svg);
+      el('text', { x: m.l - 8, y: ys(v) + 4, 'text-anchor': 'end', class: 'tick' }, svg).textContent = v;
+    });
+    const spanYears = (x1 - x0) / 12;
+    const step = [1, 2, 5, 10].find(s => (W - m.l - m.r) / (spanYears / s) >= 46) || 10;
+    for (let yr = Math.ceil(x0 / 12 / step) * step; yr * 12 <= x1; yr += step) {
+      el('text', { x: xs(yr * 12), y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = yr;
+    }
+
+    series.forEach(s => {
+      let d = '';
+      s.vals.forEach((v, i) => { const x = xs(months[i]), yy = ys(v); d += i === 0 ? `M${x},${yy}` : `V${yy}`; d += `H${xs(months[i] + 1)}`; });
+      const area = d + `V${ys(0)}H${xs(months[0])}Z`;
+      el('path', { d: area, style: `fill:${ownerVar(s.owner)};opacity:0.10` }, svg);
+      el('path', { d, fill: 'none', 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', style: `stroke:${ownerVar(s.owner)}` }, svg);
+    });
+    // Direct end labels, only when they don't collide (otherwise the legend carries identity).
+    const ends = series.map(s => ({ s, y: ys(s.vals[s.vals.length - 1]) }));
+    const collide = ends.length > 1 && ends.some((a, i) => ends.some((b, j) => i < j && Math.abs(a.y - b.y) < 14));
+    ends.forEach(({ s, y }) => {
+      el('circle', { cx: xs(NOW + 1), cy: y, r: 4, style: `fill:${ownerVar(s.owner)};stroke:var(--surface-1)`, 'stroke-width': 2 }, svg);
+      if (!collide) el('text', { x: xs(NOW + 1) + 9, y: y + 4, style: 'font-size:12px;fill:var(--text-secondary)' }, svg).textContent = `${s.owner} ${s.vals[s.vals.length - 1]}`;
+    });
+
+    // Crosshair
+    const cross = el('line', { y1: m.t, y2: H - m.b, style: 'stroke:var(--text-muted);display:none' }, svg);
+    const dots = series.map(s => el('circle', { r: 4, style: `fill:${ownerVar(s.owner)};stroke:var(--surface-1);display:none`, 'stroke-width': 2 }, svg));
+    const overlay = el('rect', { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: 'transparent' }, svg);
+    overlay.addEventListener('pointermove', e => {
+      const box = svg.getBoundingClientRect();
+      const px = e.clientX - box.left;
+      const t = Math.min(NOW, Math.max(x0, Math.floor(x0 + (px - m.l) / (W - m.l - m.r) * (x1 - x0))));
+      const i = t - x0, cx = (xs(t) + xs(t + 1)) / 2;
+      cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.style.display = '';
+      dots.forEach((d, k) => { d.setAttribute('cx', cx); d.setAttribute('cy', ys(series[k].vals[i])); d.style.display = ''; });
+      const ownedNames = o => DATA.cars.filter(c => c.owner === o && c.inM <= t && (c.current || t < c.outM)).map(c => c.name);
+      let html = `<div class="tt-h">${fmtMonth(t)}</div>` + series.map(s => `<div class="tt-r"><span><i class="sw" style="background:${ownerVar(s.owner)}"></i> ${esc(s.owner)}</span><b>${s.vals[i]} car${s.vals[i] === 1 ? '' : 's'}</b></div>`).join('');
+      if (series.length === 1) html += `<div style="margin-top:5px;color:var(--text-secondary)">${ownedNames(series[0].owner).map(esc).join('<br>')}</div>`;
+      showTip(html, e);
+    });
+    overlay.addEventListener('pointerleave', () => { cross.style.display = 'none'; dots.forEach(d => d.style.display = 'none'); hideTip(); });
+  }
+
+  // ---------- scatter ----------
+  function renderScatter() {
+    const host = $('#scatter'); host.innerHTML = '';
+    const W = Math.max(300, host.clientWidth), H = 230;
+    const m = { l: 52, r: 14, t: 12, b: 26 };
+    const pts = shownCars().filter(c => c.pl != null);
+    if (!pts.length) { host.innerHTML = '<div class="empty">No sold cars with both prices yet.</div>'; return; }
+    const xMax = Math.max(12, ...pts.map(c => c.held));
+    const yt = niceTicks(Math.min(0, ...pts.map(c => c.pl)), Math.max(0, ...pts.map(c => c.pl)), 5);
+    const y0 = yt[0], y1 = yt[yt.length - 1];
+    const yearsStep = [1, 2, 5, 10].find(s => (W - m.l - m.r) / (xMax / 12 / s) >= 46) || 10;
+    const xTop = Math.ceil(xMax / 12 / yearsStep) * yearsStep * 12;
+    const xs = v => m.l + v / xTop * (W - m.l - m.r);
+    const ys = v => m.t + (1 - (v - y0) / (y1 - y0)) * (H - m.t - m.b);
+    const svg = el('svg', { width: W, height: H, role: 'img', 'aria-label': 'Gain or loss by months held' }, host);
+    yt.forEach(v => {
+      el('line', { x1: m.l, x2: W - m.r, y1: ys(v), y2: ys(v), style: `stroke:var(${v === 0 ? '--axis' : '--grid'})` }, svg);
+      el('text', { x: m.l - 8, y: ys(v) + 4, 'text-anchor': 'end', class: 'tick' }, svg).textContent = v === 0 ? '$0' : (v > 0 ? '+' : '') + fmtCompact(v);
+    });
+    for (let yr = 0; yr * 12 <= xTop; yr += yearsStep) {
+      el('text', { x: xs(yr * 12), y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = yr === 0 ? '0' : yr + ' yr';
+    }
+    // Draw the larger owner group first so the smaller one isn't buried.
+    const sorted = pts.slice().sort((a, b) => DATA.owners.indexOf(a.owner) - DATA.owners.indexOf(b.owner));
+    sorted.forEach(c => {
+      const g = el('g', null, svg);
+      const dot = el('circle', { cx: xs(c.held), cy: ys(c.pl), r: 5, style: `fill:${ownerVar(c.owner)};stroke:var(--surface-1)`, 'stroke-width': 2 }, g);
+      const hit = el('circle', { cx: xs(c.held), cy: ys(c.pl), r: 10, fill: 'transparent' }, g);
+      hoverable(hit, () => carTip(c));
+      hit.addEventListener('pointerenter', () => { dot.setAttribute('r', 7); g.parentNode.appendChild(g); });
+      hit.addEventListener('pointerleave', () => dot.setAttribute('r', 5));
+    });
+    // Label just the best and worst sale.
+    const best = pts.reduce((a, b) => (b.pl > a.pl ? b : a));
+    const worst = pts.reduce((a, b) => (b.pl < a.pl ? b : a));
+    [best, worst].filter((c, i, arr) => arr.indexOf(c) === i && c.pl !== 0).forEach(c => {
+      const x = xs(c.held), y = ys(c.pl);
+      const right = x < W * 0.6;
+      const t = el('text', { x: right ? x + 10 : x - 10, y: y + (c.pl > 0 ? 4 : -2), 'text-anchor': right ? 'start' : 'end', style: 'font-size:11px;fill:var(--text-secondary);pointer-events:none' }, svg);
+      t.textContent = `${c.name.replace(/^(19|20)\d{2}\s+/, '')} ${fmtSigned(c.pl)}`;
+    });
+  }
+
+  // ---------- current garage ----------
+  function renderCurrent() {
+    const cars = shownCars().filter(c => c.current).sort((a, b) => b.inM - a.inM);
+    const total = cars.reduce((s, c) => s + (c.est != null ? c.est : (c.inPrice || 0)), 0);
+    $('#nowDesc').textContent = cars.length ? `${cars.length} car${cars.length === 1 ? '' : 's'}, worth about ${fmtMoney(total)}` : '';
+    $('#current').innerHTML = cars.length ? `<ul class="garage-list">${cars.map(c => `
+      <li>
+        <span class="sw" style="background:${ownerVar(c.owner)}" title="${esc(c.owner)}"></span>
+        <div><div class="g-name">${esc(c.name)}</div><div class="g-meta">${esc(c.owner)} · since ${fmtMonth(c.inM)} · ${fmtHeld(c.held)}${c.color ? ' · ' + esc(c.color) : ''}</div></div>
+        <div class="g-val"><div>${c.est != null ? fmtMoney(c.est) : '—'}</div><div class="g-sub">${c.inPrice != null ? 'paid ' + fmtMoney(c.inPrice) : 'price not recorded'}</div></div>
+      </li>`).join('')}</ul>` : '<div class="empty">Nothing in the garage right now.</div>';
+  }
+
+  // ---------- makes ----------
+  function renderMakes() {
+    const host = $('#makes'); host.innerHTML = '';
+    const owners = shownOwners(), cars = shownCars();
+    const byMake = new Map();
+    cars.forEach(c => {
+      if (!byMake.has(c.make)) byMake.set(c.make, Object.fromEntries(owners.map(o => [o, 0])));
+      byMake.get(c.make)[c.owner]++;
+    });
+    let rows = [...byMake.entries()].map(([make, counts]) => ({ make, counts, total: owners.reduce((s, o) => s + counts[o], 0) }))
+      .sort((a, b) => b.total - a.total || a.make.localeCompare(b.make));
+    const MAX = 15;
+    if (rows.length > MAX) {
+      const rest = rows.slice(MAX - 1);
+      const counts = Object.fromEntries(owners.map(o => [o, rest.reduce((s, r) => s + r.counts[o], 0)]));
+      rows = rows.slice(0, MAX - 1).concat([{ make: `Other (${rest.length} makes)`, others: rest.map(r => r.make), counts, total: rest.reduce((s, r) => s + r.total, 0) }]);
+    }
+    const W = Math.max(300, host.clientWidth), ROW = 22, BAR = 14, labelW = 128, padR = 34;
+    const H = rows.length * ROW + 4;
+    const maxT = Math.max(1, ...rows.map(r => r.total));
+    const xs = v => v / maxT * (W - labelW - padR);
+    const svg = el('svg', { width: W, height: H, role: 'img', 'aria-label': 'Cars by make' }, host);
+    el('line', { x1: labelW, x2: labelW, y1: 0, y2: H, style: 'stroke:var(--axis)' }, svg);
+    rows.forEach((r, i) => {
+      const y = i * ROW + (ROW - BAR) / 2 + 2;
+      el('text', { x: labelW - 8, y: y + BAR / 2 + 4, 'text-anchor': 'end', style: 'font-size:12px;fill:var(--text-secondary)' }, svg).textContent = r.make;
+      let x = labelW;
+      const segs = owners.filter(o => r.counts[o] > 0);
+      segs.forEach((o, k) => {
+        const w = xs(r.counts[o]) - (k < segs.length - 1 ? 2 : 0);
+        const last = k === segs.length - 1, rad = Math.min(4, w / 2);
+        const d = last
+          ? `M${x},${y}H${x + w - rad}A${rad},${rad} 0 0 1 ${x + w},${y + rad}V${y + BAR - rad}A${rad},${rad} 0 0 1 ${x + w - rad},${y + BAR}H${x}Z`
+          : `M${x},${y}H${x + w}V${y + BAR}H${x}Z`;
+        el('path', { d, style: `fill:${ownerVar(o)}` }, svg);
+        x += w + 2;
+      });
+      el('text', { x: labelW + xs(r.total) + 6, y: y + BAR / 2 + 4, style: 'font-size:12px;fill:var(--text-primary);font-variant-numeric:tabular-nums' }, svg).textContent = r.total;
+      const hit = el('rect', { x: 0, y: i * ROW, width: W, height: ROW, fill: 'transparent' }, svg);
+      hoverable(hit, () => {
+        const names = cars.filter(c => r.others ? r.others.includes(c.make) : c.make === r.make).map(c => c.name);
+        return `<div class="tt-h">${esc(r.make)}</div>` + owners.map(o => ttRow(`<i class="sw" style="background:${ownerVar(o)}"></i> ${esc(o)}`, r.counts[o])).join('')
+          + `<div style="margin-top:5px;color:var(--text-secondary)">${names.slice(0, 12).map(esc).join('<br>')}${names.length > 12 ? '<br>…and ' + (names.length - 12) + ' more' : ''}</div>`;
+      });
+    });
+  }
+
+  // ---------- table ----------
+  const COLS = [
+    { key: 'owner', label: 'Owner', val: c => c.owner },
+    { key: 'name', label: 'Car', val: c => c.name },
+    { key: 'make', label: 'Make', val: c => c.make },
+    { key: 'inM', label: 'Bought', val: c => c.inM, fmt: c => fmtMonth(c.inM) },
+    { key: 'outM', label: 'Sold', val: c => c.current ? Infinity : c.outM, fmt: c => c.current ? '<span class="pill">still owned</span>' : fmtMonth(c.outM) },
+    { key: 'held', label: 'Held', val: c => c.held, fmt: c => fmtHeld(c.held), num: true },
+    { key: 'inPrice', label: 'Paid', val: c => c.inPrice, fmt: c => fmtMoney(c.inPrice), num: true },
+    { key: 'outPrice', label: 'Sold for / est.', val: c => c.current ? c.est : c.outPrice, fmt: c => c.current ? (c.est != null ? fmtMoney(c.est) + ' <span class="pill">est.</span>' : '—') : fmtMoney(c.outPrice), num: true },
+    { key: 'pl', label: 'Gain / loss', val: c => c.pl, fmt: c => fmtSigned(c.pl), num: true, cls: c => c.pl > 0 ? 'pos' : c.pl < 0 ? 'neg' : '' },
+  ];
+  function renderTable() {
+    const q = state.q.trim().toLowerCase();
+    let cars = shownCars().filter(c => !q || [c.name, c.make, c.color, c.owner].join(' ').toLowerCase().includes(q));
+    const col = COLS.find(c => c.key === state.sort.key);
+    cars = cars.slice().sort((a, b) => {
+      const va = col.val(a), vb = col.val(b);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      return (typeof va === 'string' ? va.localeCompare(vb) : va - vb) * state.sort.dir;
+    });
+    $('#tableDesc').textContent = `${cars.length} of ${shownCars().length} cars. Click a column to sort.`;
+    $('#table').innerHTML = `<table><thead><tr>${COLS.map(c => `<th data-k="${c.key}" class="${c.num ? 'num' : ''}" ${state.sort.key === c.key ? `aria-sort="${state.sort.dir > 0 ? 'ascending' : 'descending'}"` : ''} tabindex="0">${c.label}</th>`).join('')}</tr></thead>
+      <tbody>${cars.map(car => `<tr>${COLS.map(c => {
+        const content = c.key === 'owner' ? `<span class="sw" style="background:${ownerVar(car.owner)};margin-right:7px"></span>${esc(car.owner)}` : (c.fmt ? c.fmt(car) : esc(c.val(car)));
+        return `<td class="${c.num ? 'num' : ''} ${c.cls ? c.cls(car) : ''}">${content}</td>`;
+      }).join('')}</tr>`).join('')}</tbody></table>`;
+    $('#table').querySelectorAll('th').forEach(th => {
+      const go = () => {
+        const k = th.dataset.k;
+        state.sort = state.sort.key === k ? { key: k, dir: -state.sort.dir } : { key: k, dir: ['name', 'owner', 'make'].includes(k) ? 1 : -1 };
+        renderTable();
+      };
+      th.addEventListener('click', go);
+      th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    });
+  }
+
+  // ---------- controls ----------
+  function wireControls() {
+    const seg = $('#ownerSeg');
+    seg.innerHTML = `<button type="button" data-v="all" aria-pressed="true">Both</button>` +
+      DATA.owners.map(o => `<button type="button" data-v="${esc(o)}" aria-pressed="false"><i class="sw" style="background:${ownerVar(o)}"></i>${esc(o)}</button>`).join('');
+    if (DATA.owners.length > 2) seg.firstElementChild.textContent = 'Everyone';
+    [['#ownerSeg', 'owner'], ['#rangeSeg', 'range']].forEach(([sel, key]) => {
+      $(sel).querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+        state[key] = b.dataset.v;
+        $(sel).querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+        renderAll();
+      }));
+    });
+    let t;
+    addEventListener('resize', () => { clearTimeout(t); t = setTimeout(() => { renderTimeline(); renderGarage(); renderScatter(); renderMakes(); }, 120); });
+  }
+
+  function init(raw) {
+    DATA = normalize(raw);
+    const when = raw.generatedAt ? new Date(raw.generatedAt) : new Date();
+    const stamp = when.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const title = DATA.url ? `<a href="${esc(DATA.url)}" target="_blank" rel="noopener">${esc(DATA.title || 'the sheet')}</a>` : esc(DATA.title || 'the sheet');
+    $('#sub').innerHTML = `${DATA.owners.map(esc).join(' & ')} · ${DATA.cars.length} cars · from ${title}, ${DATA.isSnapshot ? 'snapshot taken' : 'loaded'} ${esc(stamp)}`;
+    $('#controls').hidden = false;
+    renderShell(); wireControls(); renderAll();
+  }
+  function fail(msg) {
+    $('#sub').textContent = 'Couldn’t load the sheet.';
+    $('#app').innerHTML = `<div class="status error">Couldn’t load the sheet: ${esc(msg)}</div>`;
+  }
+
+  // ---------- loading from the Apps Script API ----------
+  const KEY_STORE = 'cellarCars.key';
+  const store = {
+    get() { try { return localStorage.getItem(KEY_STORE) || ''; } catch (e) { return ''; } },
+    set(v) { try { localStorage.setItem(KEY_STORE, v); } catch (e) { /* private mode: just don't remember */ } },
+    clear() { try { localStorage.removeItem(KEY_STORE); } catch (e) { /* ignore */ } },
+  };
+
+  function showGate(message) {
+    $('#sub').textContent = 'Enter the passphrase to load the sheet.';
+    $('#app').innerHTML = `
+      <form class="card gate" id="gate">
+        <h2>Passphrase</h2>
+        <p class="desc">Ask Mark or Jostin for it. It’s remembered on this device until you click “Forget passphrase”.</p>
+        <div class="gate-row">
+          <input type="password" id="gateKey" autocomplete="current-password" aria-label="Passphrase" required>
+          <button type="submit">Load cars</button>
+        </div>
+        ${message ? `<p class="gate-err" role="alert">${esc(message)}</p>` : ''}
+      </form>`;
+    $('#gateKey').focus();
+    $('#gate').addEventListener('submit', e => {
+      e.preventDefault();
+      const key = $('#gateKey').value.trim();
+      if (key) load(key);
+    });
+  }
+
+  async function load(key) {
+    $('#sub').textContent = 'Loading the sheet…';
+    $('#app').innerHTML = '<div class="status">Loading the sheet…</div>';
+    let data;
+    try {
+      // text/plain keeps this a "simple" request: no CORS preflight, which Apps Script can't answer.
+      const res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key }) });
+      data = await res.json();
+    } catch (err) {
+      return fail('couldn’t reach the Apps Script API. Check API_URL in index.html and that the deployment allows “Anyone”.');
+    }
+    if (data.error === 'unauthorized') { store.clear(); return showGate('That passphrase didn’t work.'); }
+    if (data.error) return fail(data.message || data.error);
+    store.set(key);
+    init(data);
+    const forget = document.createElement('a');
+    forget.href = '#'; forget.textContent = 'Forget passphrase';
+    forget.addEventListener('click', e => { e.preventDefault(); store.clear(); location.reload(); });
+    $('#sub').append(' · ', forget);
+  }
+
+  if (window.__SNAPSHOT__) {
+    init(window.__SNAPSHOT__);
+  } else if (!API_URL || API_URL.indexOf('PASTE_') === 0) {
+    fail('set API_URL near the top of the script in index.html to your Apps Script /exec URL.');
+  } else if (store.get()) {
+    load(store.get());
+  } else {
+    showGate();
+  }
+})();
+</script>
+</body>
+</html>
