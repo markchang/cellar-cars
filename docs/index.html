@@ -58,6 +58,14 @@
     align-items: flex-end; justify-content: space-between;
     margin-bottom: 20px;
   }
+  .title-row { display: flex; align-items: baseline; gap: 8px; }
+  /* Deliberately quiet: dollar amounts are hidden unless this is switched on. */
+  .money-toggle {
+    font: inherit; font-size: 13px; line-height: 1; color: var(--text-muted); opacity: 0.35;
+    background: none; border: 1px solid transparent; border-radius: 6px; padding: 3px 6px; cursor: pointer;
+  }
+  .money-toggle:hover, .money-toggle:focus-visible { opacity: 0.9; border-color: var(--border); }
+  .money-toggle[aria-pressed="true"] { opacity: 0.8; color: var(--text-secondary); }
   h1 { font-size: 26px; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
   .sub { margin: 4px 0 0; color: var(--text-secondary); }
   .sub a { color: inherit; }
@@ -65,7 +73,7 @@
   .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
   .ctl-label { font-size: 12px; color: var(--text-muted); margin-right: 2px; }
   .seg {
-    display: inline-flex; padding: 2px; gap: 2px;
+    display: inline-flex; flex-wrap: wrap; padding: 2px; gap: 2px;
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
   }
   .seg button {
@@ -86,6 +94,10 @@
   .card-h { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
   .card h2 { font-size: 15px; font-weight: 600; margin: 0; }
   .card .desc { margin: 2px 0 0; color: var(--text-secondary); font-size: 13px; }
+  .legend-tools { display: flex; gap: 16px; align-items: center; }
+  .link-btn { font: inherit; font-size: 12px; color: var(--s1); background: none; border: 0; padding: 0; cursor: pointer; }
+  .link-btn:hover { text-decoration: underline; }
+  .link-btn[hidden] { display: none; }
   .legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-secondary); }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
   .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 16px; }
@@ -173,16 +185,22 @@
   <div class="wrap">
     <header class="top">
       <div>
-        <h1>Cellar Cars</h1>
+        <div class="title-row">
+          <h1>Cellar Cars</h1>
+          <button type="button" class="money-toggle" id="moneyToggle" aria-pressed="false" title="Show dollar amounts" aria-label="Show dollar amounts">$</button>
+        </div>
         <p class="sub" id="sub">Loading the sheet…</p>
       </div>
       <div class="controls" id="controls" hidden>
         <div class="seg" id="ownerSeg" role="group" aria-label="Show owner"></div>
         <span class="ctl-label">Timeline</span>
         <div class="seg" id="rangeSeg" role="group" aria-label="Timeline range">
-          <button type="button" data-v="all" aria-pressed="true">All time</button>
-          <button type="button" data-v="2016">Since 2016</button>
-          <button type="button" data-v="5y">Last 5 years</button>
+          <button type="button" data-v="all" aria-pressed="false">All time</button>
+          <button type="button" data-v="2018" aria-pressed="true">Since 2018</button>
+          <button type="button" data-v="5y" aria-pressed="false">5 years</button>
+          <button type="button" data-v="2y" aria-pressed="false">2 years</button>
+          <button type="button" data-v="1y" aria-pressed="false">12 months</button>
+          <button type="button" data-v="ytd" aria-pressed="false">Year to date</button>
         </div>
       </div>
     </header>
@@ -247,6 +265,18 @@
     const lo = Math.floor(min / step) * step, hi = Math.ceil(max / step) * step;
     const out = [];
     for (let v = lo; v <= hi + step / 2; v += step) out.push(Math.round(v * 1e6) / 1e6);
+    return out;
+  }
+  // Time-axis ticks (in months). Picks the smallest step that keeps labels at least minGap px apart:
+  // months for short ranges (January shows the year), years for long ones.
+  function timeTicks(x0, x1, px, minGap) {
+    const perMonth = px / Math.max(1, x1 - x0);
+    const step = [1, 2, 3, 6, 12, 24, 60, 120].find(s => s * perMonth >= minGap) || 120;
+    const out = [];
+    for (let m = Math.ceil(x0 / step) * step; m <= x1; m += step) {
+      const yr = Math.floor(m / 12), mo = ((m % 12) + 12) % 12;
+      out.push({ m, label: step >= 12 || mo === 0 ? String(yr) : MONTHS[mo] });
+    }
     return out;
   }
   const measureCtx = document.createElement('canvas').getContext('2d');
@@ -316,7 +346,7 @@
 
   // ---------- state ----------
   let DATA = null;
-  const state = { owner: 'all', range: 'all', sort: { key: 'inM', dir: -1 }, q: '' };
+  const state = { owner: 'all', range: '2018', heldAll: false, money: false, sort: { key: 'inM', dir: -1 }, q: '' };
   const ownerVar = o => 'var(--s' + (DATA.owners.indexOf(o) + 1) + ')';
   const shownOwners = () => state.owner === 'all' ? DATA.owners : [state.owner];
   const shownCars = () => DATA.cars.filter(c => state.owner === 'all' || c.owner === state.owner);
@@ -324,9 +354,14 @@
     const cars = shownCars();
     const minIn = cars.length ? Math.min(...cars.map(c => c.inM)) : NOW - 60;
     let x0 = Math.floor(minIn / 12) * 12;
-    if (state.range === '2016') x0 = Math.max(x0, 2016 * 12);
+    if (state.range === '2018') x0 = Math.max(x0, 2018 * 12);
     if (state.range === '5y') x0 = NOW - 60;
-    return [x0, NOW + 3];
+    if (state.range === '2y') x0 = NOW - 24;
+    if (state.range === '1y') x0 = NOW - 12;
+    if (state.range === 'ytd') x0 = NOW - (NOW % 12);  // January of this year
+    // A little room after "now", scaled so short ranges don't get a big empty gap.
+    const pad = Math.max(1, Math.min(3, Math.round((NOW - x0) / 40)));
+    return [x0, NOW + pad];
   }
 
   // ---------- tooltip ----------
@@ -346,10 +381,10 @@
       + ttRow('Owner', esc(c.owner))
       + ttRow('Owned', `${fmtMonth(c.inM)} – ${c.current ? 'now' : fmtMonth(c.outM)}`)
       + ttRow('Held', fmtHeld(c.held))
-      + (c.inPrice != null ? ttRow('Paid', fmtMoney(c.inPrice)) : '')
-      + (!c.current && c.outPrice != null ? ttRow('Sold for', fmtMoney(c.outPrice)) : '')
-      + (c.current && c.est != null ? ttRow('Est. value', fmtMoney(c.est)) : '')
-      + (c.pl != null ? ttRow('Gain / loss', fmtSigned(c.pl)) : '')
+      + (state.money && c.inPrice != null ? ttRow('Paid', fmtMoney(c.inPrice)) : '')
+      + (state.money && !c.current && c.outPrice != null ? ttRow('Sold for', fmtMoney(c.outPrice)) : '')
+      + (state.money && c.current && c.est != null ? ttRow('Est. value', fmtMoney(c.est)) : '')
+      + (state.money && c.pl != null ? ttRow('Gain / loss', fmtSigned(c.pl)) : '')
       + (c.color ? ttRow('Color', esc(c.color)) : '');
   }
   function hoverable(node, html) {
@@ -376,10 +411,17 @@
           <div class="chart" id="garage"></div>
         </section>
         <section class="card">
-          <div class="card-h"><div><h2>Gain or loss vs. time held</h2><p class="desc">Sold cars with both prices recorded. Above zero means it sold for more than it cost.</p></div><div id="scLegend"></div></div>
-          <div class="chart" id="scatter"></div>
+          <div class="card-h"><div><h2>How long cars stay</h2><p class="desc" id="histDesc"></p></div><div id="hiLegend"></div></div>
+          <div class="chart" id="hist"></div>
         </section>
       </div>
+      <section class="card">
+        <div class="card-h">
+          <div><h2>Time held, per car</h2><p class="desc" id="heldDesc"></p></div>
+          <div class="legend-tools"><div id="hdLegend"></div><button type="button" class="link-btn" id="heldMore"></button></div>
+        </div>
+        <div class="chart" id="held"></div>
+      </section>
       <div class="grid2">
         <section class="card">
           <div class="card-h"><div><h2>In the garage now</h2><p class="desc" id="nowDesc"></p></div></div>
@@ -402,8 +444,8 @@
 
   function renderAll() {
     const legend = legendHTML(shownOwners());
-    ['#tlLegend', '#gsLegend', '#scLegend', '#mkLegend'].forEach(s => { $(s).innerHTML = shownOwners().length > 1 ? legend : ''; });
-    renderTiles(); renderTimeline(); renderGarage(); renderScatter(); renderCurrent(); renderMakes(); renderTable();
+    ['#tlLegend', '#gsLegend', '#hiLegend', '#hdLegend', '#mkLegend'].forEach(s => { $(s).innerHTML = shownOwners().length > 1 ? legend : ''; });
+    renderTiles(); renderTimeline(); renderGarage(); renderHist(); renderHeld(); renderCurrent(); renderMakes(); renderTable();
   }
 
   // ---------- stat tiles ----------
@@ -419,13 +461,20 @@
       const longest = cars.slice().sort((a, b) => b.held - a.held)[0];
       const first = cars.slice().sort((a, b) => a.inM - b.inM)[0];
       const best = withPl.slice().sort((a, b) => b.pl - a.pl)[0];
+      const makeCounts = {};
+      cars.forEach(c => { makeCounts[c.make] = (makeCounts[c.make] || 0) + 1; });
+      const topMake = Object.entries(makeCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+      const quickest = sold.slice().sort((a, b) => a.held - b.held || b.outM - a.outM)[0];
       const tile = (label, value, note, cls) => `<div class="tile"><div class="label">${label}</div><div class="value ${cls || ''}">${value}</div><div class="note" title="${esc(note || '')}">${esc(note || '')}</div></div>`;
       return `<div class="owner-row">
         <div class="owner-name"><span class="sw" style="background:${ownerVar(o)}"></span>${esc(o)}</div>
         ${tile('Cars owned', cars.length, first ? 'since ' + Math.floor(first.inM / 12) : '')}
         ${tile('In the garage now', cur.length, sold.length + ' sold')}
-        ${tile('Garage value', fmtCompact(value), 'estimated, current cars')}
-        ${tile('Gain / loss on sales', fmtSigned(realized), best ? 'best: ' + best.name + ' ' + fmtSigned(best.pl) : withPl.length + ' sales with prices', realized > 0 ? 'pos' : realized < 0 ? 'neg' : '')}
+        ${state.money ? `
+          ${tile('Garage value', fmtCompact(value), 'estimated, current cars')}
+          ${tile('Gain / loss on sales', fmtSigned(realized), best ? 'best: ' + best.name + ' ' + fmtSigned(best.pl) : withPl.length + ' sales with prices', realized > 0 ? 'pos' : realized < 0 ? 'neg' : '')}` : `
+          ${tile('Favorite make', topMake ? esc(topMake[0]) : '—', topMake ? topMake[1] + ' of ' + cars.length + ' cars' : '')}
+          ${tile('Quickest flip', quickest ? fmtHeld(quickest.held) : '—', quickest ? quickest.name : '')}`}
         ${tile('Average time held', fmtHeld(avgHold), longest ? 'longest: ' + longest.name : '')}
       </div>`;
     });
@@ -461,15 +510,13 @@
     const clip = el('clipPath', { id: 'tlClip' }, defs);
     el('rect', { x: plotL, y: 0, width: plotR - plotL, height: H }, clip);
 
-    // Year grid
-    const spanYears = (x1 - x0) / 12;
-    const step = [1, 2, 5, 10].find(s => (plotR - plotL) / (spanYears / s) >= 52) || 10;
-    for (let yr = Math.ceil(x0 / 12 / step) * step; yr * 12 <= x1; yr += step) {
-      const x = xs(yr * 12);
+    // Time grid (years, or months for short ranges)
+    timeTicks(x0, x1, plotR - plotL, 52).forEach(t => {
+      const x = xs(t.m);
       el('line', { x1: x, x2: x, y1: axisH, y2: H - 4, style: 'stroke:var(--grid)', 'stroke-width': 1 }, svg);
-      // Skip a year label that would collide with the "now" label.
-      if (Math.abs(x - xs(NOW + 1)) > 44) el('text', { x, y: axisH - 8, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = yr;
-    }
+      // Skip a label that would collide with the "now" label.
+      if (Math.abs(x - xs(NOW + 1)) > 44) el('text', { x, y: axisH - 8, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = t.label;
+    });
     el('line', { x1: plotL, x2: plotR, y1: axisH, y2: axisH, style: 'stroke:var(--axis)' }, svg);
 
     // "Now" marker
@@ -537,11 +584,9 @@
       el('line', { x1: m.l, x2: W - m.r, y1: ys(v), y2: ys(v), style: `stroke:var(${v === 0 ? '--axis' : '--grid'})` }, svg);
       el('text', { x: m.l - 8, y: ys(v) + 4, 'text-anchor': 'end', class: 'tick' }, svg).textContent = v;
     });
-    const spanYears = (x1 - x0) / 12;
-    const step = [1, 2, 5, 10].find(s => (W - m.l - m.r) / (spanYears / s) >= 46) || 10;
-    for (let yr = Math.ceil(x0 / 12 / step) * step; yr * 12 <= x1; yr += step) {
-      el('text', { x: xs(yr * 12), y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = yr;
-    }
+    timeTicks(x0, x1, W - m.l - m.r, 46).forEach(t => {
+      el('text', { x: xs(t.m), y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = t.label;
+    });
 
     series.forEach(s => {
       let d = '';
@@ -577,46 +622,106 @@
     overlay.addEventListener('pointerleave', () => { cross.style.display = 'none'; dots.forEach(d => d.style.display = 'none'); hideTip(); });
   }
 
-  // ---------- scatter ----------
-  function renderScatter() {
-    const host = $('#scatter'); host.innerHTML = '';
+  // ---------- how long cars stay (histogram) ----------
+  // Equal-width columns for unequal duration ranges, so the axis labels carry the range.
+  const HELD_BINS = [[0, 3, '< 3 mo'], [3, 6, '3–6 mo'], [6, 12, '6–12 mo'], [12, 24, '1–2 yr'],
+    [24, 36, '2–3 yr'], [36, 60, '3–5 yr'], [60, 120, '5–10 yr'], [120, Infinity, '10+ yr']];
+  function median(nums) {
+    if (!nums.length) return null;
+    const a = nums.slice().sort((x, y) => x - y), mid = Math.floor(a.length / 2);
+    return a.length % 2 ? a[mid] : Math.round((a[mid - 1] + a[mid]) / 2);
+  }
+  function renderHist() {
+    const host = $('#hist'); host.innerHTML = '';
+    const owners = shownOwners(), cars = shownCars();
+    $('#histDesc').textContent = 'Every car by time owned. Cars still in the garage count their time so far. Median: '
+      + owners.map(o => `${o} ${fmtHeld(median(cars.filter(c => c.owner === o).map(c => c.held)))}`).join(' · ');
+    const bins = HELD_BINS.map(([lo, hi, label]) => {
+      const inBin = cars.filter(c => c.held >= lo && c.held < hi);
+      return { label, cars: inBin, counts: Object.fromEntries(owners.map(o => [o, inBin.filter(c => c.owner === o).length])), total: inBin.length };
+    });
     const W = Math.max(300, host.clientWidth), H = 230;
-    const m = { l: 52, r: 14, t: 12, b: 26 };
-    const pts = shownCars().filter(c => c.pl != null);
-    if (!pts.length) { host.innerHTML = '<div class="empty">No sold cars with both prices yet.</div>'; return; }
-    const xMax = Math.max(12, ...pts.map(c => c.held));
-    const yt = niceTicks(Math.min(0, ...pts.map(c => c.pl)), Math.max(0, ...pts.map(c => c.pl)), 5);
-    const y0 = yt[0], y1 = yt[yt.length - 1];
-    const yearsStep = [1, 2, 5, 10].find(s => (W - m.l - m.r) / (xMax / 12 / s) >= 46) || 10;
-    const xTop = Math.ceil(xMax / 12 / yearsStep) * yearsStep * 12;
-    const xs = v => m.l + v / xTop * (W - m.l - m.r);
-    const ys = v => m.t + (1 - (v - y0) / (y1 - y0)) * (H - m.t - m.b);
-    const svg = el('svg', { width: W, height: H, role: 'img', 'aria-label': 'Gain or loss by months held' }, host);
-    yt.forEach(v => {
+    const m = { l: 30, r: 8, t: 20, b: 26 };
+    const yTicks = niceTicks(0, Math.max(1, ...bins.map(b => b.total)), 4).filter(Number.isInteger);
+    const yTop = yTicks[yTicks.length - 1];
+    const band = (W - m.l - m.r) / bins.length, colW = Math.min(24, band * 0.6);
+    const ys = v => m.t + (1 - v / yTop) * (H - m.t - m.b);
+    const svg = el('svg', { width: W, height: H, role: 'img', 'aria-label': 'Histogram of how long cars were owned' }, host);
+    yTicks.forEach(v => {
       el('line', { x1: m.l, x2: W - m.r, y1: ys(v), y2: ys(v), style: `stroke:var(${v === 0 ? '--axis' : '--grid'})` }, svg);
-      el('text', { x: m.l - 8, y: ys(v) + 4, 'text-anchor': 'end', class: 'tick' }, svg).textContent = v === 0 ? '$0' : (v > 0 ? '+' : '') + fmtCompact(v);
+      el('text', { x: m.l - 8, y: ys(v) + 4, 'text-anchor': 'end', class: 'tick' }, svg).textContent = v;
     });
-    for (let yr = 0; yr * 12 <= xTop; yr += yearsStep) {
-      el('text', { x: xs(yr * 12), y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = yr === 0 ? '0' : yr + ' yr';
+    bins.forEach((b, i) => {
+      const cx = m.l + band * i + band / 2, x = cx - colW / 2;
+      let y = ys(0);
+      const segs = owners.filter(o => b.counts[o] > 0);
+      segs.forEach((o, k) => {
+        const top = k === segs.length - 1;
+        const h = ys(0) - ys(b.counts[o]) - (top ? 0 : 2);
+        const y0 = y - h, r = top ? Math.min(4, h, colW / 2) : 0;
+        const d = r
+          ? `M${x},${y}V${y0 + r}A${r},${r} 0 0 1 ${x + r},${y0}H${x + colW - r}A${r},${r} 0 0 1 ${x + colW},${y0 + r}V${y}Z`
+          : `M${x},${y}V${y0}H${x + colW}V${y}Z`;
+        el('path', { d, style: `fill:${ownerVar(o)}` }, svg);
+        y = y0 - 2;
+      });
+      if (b.total) el('text', { x: cx, y: ys(b.total) - 6, 'text-anchor': 'middle', style: 'font-size:12px;fill:var(--text-primary);font-variant-numeric:tabular-nums' }, svg).textContent = b.total;
+      el('text', { x: cx, y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = b.label;
+      const hit = el('rect', { x: m.l + band * i, y: m.t, width: band, height: H - m.t - m.b, fill: 'transparent' }, svg);
+      hoverable(hit, () => {
+        const names = b.cars.slice().sort((p, q) => q.held - p.held).map(c => `${esc(c.name)} <span style="color:var(--text-muted)">${fmtHeld(c.held)}</span>`);
+        return `<div class="tt-h">Owned ${esc(b.label)}</div>`
+          + owners.map(o => ttRow(`<i class="sw" style="background:${ownerVar(o)}"></i> ${esc(o)}`, b.counts[o])).join('')
+          + (names.length ? `<div style="margin-top:5px;color:var(--text-secondary)">${names.slice(0, 12).join('<br>')}${names.length > 12 ? '<br>…and ' + (names.length - 12) + ' more' : ''}</div>` : '');
+      });
+    });
+  }
+
+  // ---------- time held, per car ----------
+  function fitText(str, font, maxW) {
+    if (textWidth(str, font) <= maxW) return str;
+    let lo = 0, hi = str.length;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (textWidth(str.slice(0, mid) + '…', font) <= maxW) lo = mid; else hi = mid - 1; }
+    return str.slice(0, lo) + '…';
+  }
+  function renderHeld() {
+    const host = $('#held'); host.innerHTML = '';
+    const LIMIT = 20;
+    const cars = shownCars().slice().sort((a, b) => b.held - a.held || a.inM - b.inM);
+    const list = state.heldAll ? cars : cars.slice(0, LIMIT);
+    const more = $('#heldMore');
+    more.hidden = cars.length <= LIMIT;
+    more.textContent = state.heldAll ? `Show top ${LIMIT}` : `Show all ${cars.length}`;
+    more.onclick = () => { state.heldAll = !state.heldAll; renderHeld(); };
+    $('#heldDesc').textContent = state.heldAll || cars.length <= LIMIT
+      ? `All ${cars.length} cars, longest first. Cars still owned count their time so far.`
+      : `The ${LIMIT} longest-held of ${cars.length} cars. Cars still owned count their time so far.`;
+
+    const W = Math.max(300, host.clientWidth), ROW = 22, BAR = 14, axisH = 20;
+    const labelW = Math.round(Math.min(250, Math.max(130, W * 0.28))), padR = 130;
+    const plotW = Math.max(60, W - labelW - padR);
+    const maxH = Math.max(12, ...list.map(c => c.held));
+    const yrStep = [1, 2, 5, 10].find(st => plotW / (maxH / 12 / st) >= 50) || 10;
+    const xTop = Math.ceil(maxH / 12 / yrStep) * yrStep * 12;
+    const xs = v => labelW + v / xTop * plotW;
+    const H = axisH + list.length * ROW + 4;
+    const svg = el('svg', { width: W, height: H, role: 'img', 'aria-label': 'Time each car was owned' }, host);
+    for (let yr = 0; yr * 12 <= xTop; yr += yrStep) {
+      const x = xs(yr * 12);
+      el('line', { x1: x, x2: x, y1: axisH, y2: H, style: `stroke:var(${yr === 0 ? '--axis' : '--grid'})` }, svg);
+      el('text', { x, y: axisH - 8, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = yr === 0 ? '0' : yr + ' yr';
     }
-    // Draw the larger owner group first so the smaller one isn't buried.
-    const sorted = pts.slice().sort((a, b) => DATA.owners.indexOf(a.owner) - DATA.owners.indexOf(b.owner));
-    sorted.forEach(c => {
-      const g = el('g', null, svg);
-      const dot = el('circle', { cx: xs(c.held), cy: ys(c.pl), r: 5, style: `fill:${ownerVar(c.owner)};stroke:var(--surface-1)`, 'stroke-width': 2 }, g);
-      const hit = el('circle', { cx: xs(c.held), cy: ys(c.pl), r: 10, fill: 'transparent' }, g);
+    const labelFont = `12px ${FONT}`;
+    list.forEach((c, i) => {
+      const yRow = axisH + i * ROW, y = yRow + (ROW - BAR) / 2 + 1;
+      el('text', { x: labelW - 10, y: y + BAR / 2 + 4, 'text-anchor': 'end', style: 'font-size:12px;fill:var(--text-secondary)' }, svg).textContent = fitText(c.name, labelFont, labelW - 18);
+      const x0 = xs(0), w = Math.max(2, xs(c.held) - x0), r = Math.min(4, w / 2);
+      el('path', { d: `M${x0},${y}H${x0 + w - r}A${r},${r} 0 0 1 ${x0 + w},${y + r}V${y + BAR - r}A${r},${r} 0 0 1 ${x0 + w - r},${y + BAR}H${x0}Z`, style: `fill:${ownerVar(c.owner)}` }, svg);
+      const t = el('text', { x: x0 + w + 6, y: y + BAR / 2 + 4, style: 'font-size:12px;fill:var(--text-primary);font-variant-numeric:tabular-nums' }, svg);
+      t.textContent = fmtHeld(c.held);
+      if (c.current) { const ts = el('tspan', { style: 'fill:var(--text-muted)' }, t); ts.textContent = ' · still owned'; }
+      const hit = el('rect', { x: 0, y: yRow, width: W, height: ROW, fill: 'transparent' }, svg);
       hoverable(hit, () => carTip(c));
-      hit.addEventListener('pointerenter', () => { dot.setAttribute('r', 7); g.parentNode.appendChild(g); });
-      hit.addEventListener('pointerleave', () => dot.setAttribute('r', 5));
-    });
-    // Label just the best and worst sale.
-    const best = pts.reduce((a, b) => (b.pl > a.pl ? b : a));
-    const worst = pts.reduce((a, b) => (b.pl < a.pl ? b : a));
-    [best, worst].filter((c, i, arr) => arr.indexOf(c) === i && c.pl !== 0).forEach(c => {
-      const x = xs(c.held), y = ys(c.pl);
-      const right = x < W * 0.6;
-      const t = el('text', { x: right ? x + 10 : x - 10, y: y + (c.pl > 0 ? 4 : -2), 'text-anchor': right ? 'start' : 'end', style: 'font-size:11px;fill:var(--text-secondary);pointer-events:none' }, svg);
-      t.textContent = `${c.name.replace(/^(19|20)\d{2}\s+/, '')} ${fmtSigned(c.pl)}`;
     });
   }
 
@@ -624,12 +729,12 @@
   function renderCurrent() {
     const cars = shownCars().filter(c => c.current).sort((a, b) => b.inM - a.inM);
     const total = cars.reduce((s, c) => s + (c.est != null ? c.est : (c.inPrice || 0)), 0);
-    $('#nowDesc').textContent = cars.length ? `${cars.length} car${cars.length === 1 ? '' : 's'}, worth about ${fmtMoney(total)}` : '';
+    $('#nowDesc').textContent = cars.length ? `${cars.length} car${cars.length === 1 ? '' : 's'}${state.money ? ', worth about ' + fmtMoney(total) : ''}` : '';
     $('#current').innerHTML = cars.length ? `<ul class="garage-list">${cars.map(c => `
       <li>
         <span class="sw" style="background:${ownerVar(c.owner)}" title="${esc(c.owner)}"></span>
         <div><div class="g-name">${esc(c.name)}</div><div class="g-meta">${esc(c.owner)} · since ${fmtMonth(c.inM)} · ${fmtHeld(c.held)}${c.color ? ' · ' + esc(c.color) : ''}</div></div>
-        <div class="g-val"><div>${c.est != null ? fmtMoney(c.est) : '—'}</div><div class="g-sub">${c.inPrice != null ? 'paid ' + fmtMoney(c.inPrice) : 'price not recorded'}</div></div>
+        ${state.money ? `<div class="g-val"><div>${c.est != null ? fmtMoney(c.est) : '—'}</div><div class="g-sub">${c.inPrice != null ? 'paid ' + fmtMoney(c.inPrice) : 'price not recorded'}</div></div>` : '<div></div>'}
       </li>`).join('')}</ul>` : '<div class="empty">Nothing in the garage right now.</div>';
   }
 
@@ -688,14 +793,16 @@
     { key: 'inM', label: 'Bought', val: c => c.inM, fmt: c => fmtMonth(c.inM) },
     { key: 'outM', label: 'Sold', val: c => c.current ? Infinity : c.outM, fmt: c => c.current ? '<span class="pill">still owned</span>' : fmtMonth(c.outM) },
     { key: 'held', label: 'Held', val: c => c.held, fmt: c => fmtHeld(c.held), num: true },
-    { key: 'inPrice', label: 'Paid', val: c => c.inPrice, fmt: c => fmtMoney(c.inPrice), num: true },
-    { key: 'outPrice', label: 'Sold for / est.', val: c => c.current ? c.est : c.outPrice, fmt: c => c.current ? (c.est != null ? fmtMoney(c.est) + ' <span class="pill">est.</span>' : '—') : fmtMoney(c.outPrice), num: true },
-    { key: 'pl', label: 'Gain / loss', val: c => c.pl, fmt: c => fmtSigned(c.pl), num: true, cls: c => c.pl > 0 ? 'pos' : c.pl < 0 ? 'neg' : '' },
+    { key: 'inPrice', label: 'Paid', money: true, val: c => c.inPrice, fmt: c => fmtMoney(c.inPrice), num: true },
+    { key: 'outPrice', label: 'Sold for / est.', money: true, val: c => c.current ? c.est : c.outPrice, fmt: c => c.current ? (c.est != null ? fmtMoney(c.est) + ' <span class="pill">est.</span>' : '—') : fmtMoney(c.outPrice), num: true },
+    { key: 'pl', label: 'Gain / loss', money: true, val: c => c.pl, fmt: c => fmtSigned(c.pl), num: true, cls: c => c.pl > 0 ? 'pos' : c.pl < 0 ? 'neg' : '' },
   ];
   function renderTable() {
     const q = state.q.trim().toLowerCase();
     let cars = shownCars().filter(c => !q || [c.name, c.make, c.color, c.owner].join(' ').toLowerCase().includes(q));
-    const col = COLS.find(c => c.key === state.sort.key);
+    const cols = COLS.filter(c => state.money || !c.money);
+    if (!cols.some(c => c.key === state.sort.key)) state.sort = { key: 'inM', dir: -1 };
+    const col = cols.find(c => c.key === state.sort.key);
     cars = cars.slice().sort((a, b) => {
       const va = col.val(a), vb = col.val(b);
       if (va == null && vb == null) return 0;
@@ -704,8 +811,8 @@
       return (typeof va === 'string' ? va.localeCompare(vb) : va - vb) * state.sort.dir;
     });
     $('#tableDesc').textContent = `${cars.length} of ${shownCars().length} cars. Click a column to sort.`;
-    $('#table').innerHTML = `<table><thead><tr>${COLS.map(c => `<th data-k="${c.key}" class="${c.num ? 'num' : ''}" ${state.sort.key === c.key ? `aria-sort="${state.sort.dir > 0 ? 'ascending' : 'descending'}"` : ''} tabindex="0">${c.label}</th>`).join('')}</tr></thead>
-      <tbody>${cars.map(car => `<tr>${COLS.map(c => {
+    $('#table').innerHTML = `<table><thead><tr>${cols.map(c => `<th data-k="${c.key}" class="${c.num ? 'num' : ''}" ${state.sort.key === c.key ? `aria-sort="${state.sort.dir > 0 ? 'ascending' : 'descending'}"` : ''} tabindex="0">${c.label}</th>`).join('')}</tr></thead>
+      <tbody>${cars.map(car => `<tr>${cols.map(c => {
         const content = c.key === 'owner' ? `<span class="sw" style="background:${ownerVar(car.owner)};margin-right:7px"></span>${esc(car.owner)}` : (c.fmt ? c.fmt(car) : esc(c.val(car)));
         return `<td class="${c.num ? 'num' : ''} ${c.cls ? c.cls(car) : ''}">${content}</td>`;
       }).join('')}</tr>`).join('')}</tbody></table>`;
@@ -733,8 +840,14 @@
         renderAll();
       }));
     });
+    $('#moneyToggle').addEventListener('click', e => {
+      state.money = !state.money;
+      const b = e.currentTarget, label = state.money ? 'Hide dollar amounts' : 'Show dollar amounts';
+      b.setAttribute('aria-pressed', String(state.money)); b.title = label; b.setAttribute('aria-label', label);
+      renderAll();
+    });
     let t;
-    addEventListener('resize', () => { clearTimeout(t); t = setTimeout(() => { renderTimeline(); renderGarage(); renderScatter(); renderMakes(); }, 120); });
+    addEventListener('resize', () => { clearTimeout(t); t = setTimeout(() => { renderTimeline(); renderGarage(); renderHist(); renderHeld(); renderMakes(); }, 120); });
   }
 
   function init(raw) {
