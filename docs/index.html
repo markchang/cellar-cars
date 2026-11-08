@@ -439,6 +439,13 @@
       </div>
       <section class="card">
         <div class="card-h">
+          <div><h2>How old cars were when bought</h2><p class="desc" id="ageDesc"></p></div>
+          <div id="agLegend"></div>
+        </div>
+        <div class="chart" id="age"></div>
+      </section>
+      <section class="card">
+        <div class="card-h">
           <div><h2>Time held, per car</h2><p class="desc" id="heldDesc"></p></div>
           <div class="legend-tools"><div id="hdLegend"></div><button type="button" class="link-btn" id="heldMore"></button></div>
         </div>
@@ -464,10 +471,20 @@
     $('#search').addEventListener('input', e => { state.q = e.target.value; renderTable(); });
   }
 
+  // Charts are cleared and rebuilt when redrawn. Hold each one's height during the rebuild so the page
+  // never briefly gets shorter; Safari (no scroll anchoring) would otherwise jump the scroll position up.
+  function keepHeights(fn) {
+    const hosts = [...document.querySelectorAll('#app .chart, #tiles, #current')];
+    hosts.forEach(h => { h.style.minHeight = h.offsetHeight + 'px'; });
+    try { fn(); } finally { hosts.forEach(h => { h.style.minHeight = ''; }); }
+  }
+
   function renderAll() {
-    const legend = legendHTML(shownOwners());
-    ['#tlLegend', '#gsLegend', '#hiLegend', '#hdLegend', '#mkLegend'].forEach(s => { $(s).innerHTML = shownOwners().length > 1 ? legend : ''; });
-    renderTiles(); renderTimeline(); renderGarage(); renderHist(); renderHeld(); renderCurrent(); renderMakes(); renderTable();
+    keepHeights(() => {
+      const legend = legendHTML(shownOwners());
+      ['#tlLegend', '#gsLegend', '#hiLegend', '#agLegend', '#hdLegend', '#mkLegend'].forEach(s => { $(s).innerHTML = shownOwners().length > 1 ? legend : ''; });
+      renderTiles(); renderTimeline(); renderGarage(); renderHist(); renderAge(); renderHeld(); renderCurrent(); renderMakes(); renderTable();
+    });
   }
 
   // ---------- stat tiles ----------
@@ -742,6 +759,67 @@
     });
   }
 
+  // ---------- age when bought ----------
+  // One dot per car: when it was bought (x) and how old it was then (y), from the model year in its name.
+  // A thin line per owner traces the median age of that year's purchases, to show the trend.
+  function renderAge() {
+    const host = $('#age');
+    const W = Math.max(240, host.clientWidth), H = 260;
+    host.innerHTML = '';
+    const [x0, x1] = domain();
+    const owners = shownOwners();
+    const inWindow = shownCars().filter(c => c.inM >= x0);
+    const ageOf = c => Math.max(0, Math.floor(c.inM / 12) - c.year);
+    const pts = inWindow.filter(c => c.year);
+    const missing = inWindow.length - pts.length;
+    const words = { all: '', '2018': ' since 2018', '5y': ' in the last 5 years', '2y': ' in the last 2 years', '1y': ' in the last 12 months', ytd: ' this year' }[state.range] || '';
+    $('#ageDesc').textContent = `Each dot is a car bought${words}: when you bought it, and how old it was then. Lines show each year’s median.`
+      + (missing ? ` ${missing} car${missing === 1 ? '' : 's'} without a model year in the name ${missing === 1 ? 'isn’t' : 'aren’t'} shown.` : '');
+    if (!pts.length) { host.innerHTML = '<div class="empty">No purchases with a model year in this window.</div>'; return; }
+
+    const m = { l: 40, r: 12, t: 12, b: 26 };
+    const yt = niceTicks(0, Math.max(5, ...pts.map(ageOf)), 5);
+    const yTop = yt[yt.length - 1];
+    const xs = t => m.l + (t - x0) / (x1 - x0) * (W - m.l - m.r);
+    const ys = v => m.t + (1 - v / yTop) * (H - m.t - m.b);
+    const svg = el('svg', { width: W, height: H, role: 'img', 'aria-label': 'Age of each car when bought, by purchase date' }, host);
+    yt.forEach(v => {
+      el('line', { x1: m.l, x2: W - m.r, y1: ys(v), y2: ys(v), style: `stroke:var(${v === 0 ? '--axis' : '--grid'})` }, svg);
+      el('text', { x: m.l - 8, y: ys(v) + 4, 'text-anchor': 'end', class: 'tick' }, svg).textContent = v === 0 ? 'new' : v + ' yr';
+    });
+    timeTicks(x0, x1, W - m.l - m.r, 46).forEach(t => {
+      el('text', { x: xs(t.m), y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = t.label;
+    });
+
+    // Yearly median per owner (only years with a purchase), drawn under the dots.
+    owners.forEach(o => {
+      const byYear = {};
+      pts.filter(c => c.owner === o).forEach(c => { const y = Math.floor(c.inM / 12); (byYear[y] = byYear[y] || []).push(ageOf(c)); });
+      const line = Object.keys(byYear).map(Number).sort((a, b) => a - b)
+        .map(y => [Math.max(x0, Math.min(x1, y * 12 + 6)), median(byYear[y])]);
+      if (line.length < 2) return;
+      el('path', { d: line.map(([t, v], i) => `${i ? 'L' : 'M'}${xs(t)},${ys(v)}`).join(''), fill: 'none', 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', style: `stroke:${ownerVar(o)};opacity:0.45` }, svg);
+    });
+
+    pts.slice().sort((a, b) => owners.indexOf(a.owner) - owners.indexOf(b.owner)).forEach(c => {
+      const g = el('g', null, svg);
+      const cx = xs(c.inM + 0.5), cy = ys(ageOf(c));
+      const dot = el('circle', { cx, cy, r: 5, style: `fill:${ownerVar(c.owner)};stroke:var(--surface-1)`, 'stroke-width': 2 }, g);
+      const hit = el('circle', { cx, cy, r: 10, fill: 'transparent' }, g);
+      hoverable(hit, () => carTip(c) + ttRow('Age when bought', ageOf(c) === 0 ? 'new' : ageOf(c) + ' yr'));
+      hit.addEventListener('pointerenter', () => { dot.setAttribute('r', 7); g.parentNode.appendChild(g); });
+      hit.addEventListener('pointerleave', () => dot.setAttribute('r', 5));
+    });
+
+    // Label the oldest car bought in the window.
+    const oldest = pts.reduce((a, b) => (ageOf(b) > ageOf(a) ? b : a));
+    const oText = `${oldest.name.replace(/^(19|20)\d{2}\s+/, '')}, ${ageOf(oldest)} yr old`;
+    const ox = xs(oldest.inM + 0.5), oy = ys(ageOf(oldest));
+    const right = ox + 10 + textWidth(oText, `11px ${FONT}`) <= W - 2;   // flip left if it would run off the edge
+    el('text', { x: right ? ox + 10 : ox - 10, y: oy + 4, 'text-anchor': right ? 'start' : 'end', style: 'font-size:11px;fill:var(--text-secondary);pointer-events:none' }, svg)
+      .textContent = oText;
+  }
+
   // ---------- time held, per car ----------
   function fitText(str, font, maxW) {
     if (textWidth(str, font) <= maxW) return str;
@@ -919,8 +997,17 @@
       b.setAttribute('aria-pressed', String(state.money)); b.title = label; b.setAttribute('aria-label', label);
       renderAll();
     });
-    let t;
-    addEventListener('resize', () => { clearTimeout(t); t = setTimeout(() => { renderTimeline(); renderGarage(); renderHist(); renderHeld(); renderMakes(); }, 120); });
+    // iPhone Safari fires "resize" whenever its toolbar or keyboard changes height. Only redraw
+    // when the width actually changes, since the charts only depend on width.
+    let t, lastW = innerWidth;
+    addEventListener('resize', () => {
+      clearTimeout(t);
+      t = setTimeout(() => {
+        if (innerWidth === lastW) return;
+        lastW = innerWidth;
+        keepHeights(() => { renderTimeline(); renderGarage(); renderHist(); renderAge(); renderHeld(); renderMakes(); });
+      }, 120);
+    });
   }
 
   function init(raw) {
